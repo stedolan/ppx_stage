@@ -1,0 +1,15 @@
+opam-version: "1.2"
+maintainer: "stephen.dolan@cl.cam.ac.uk"
+authors: ["Stephen Dolan"]
+homepage: "https://github.com/stedolan/malfunction"
+bug-reports: "https://github.com/stedolan/malfunction/issues"
+dev-repo: "https://github.com/stedolan/malfunction.git"
+license: "MIT"
+build:
+[[ "jbuilder" "build" "--only-packages" "%{name}%" "--root" "." "-j" jobs "@install" ]]
+available: [ ocaml-version >= "4.04" ]
+depends: [
+  "jbuilder" {build}
+  "ocaml-migrate-parsetree"
+  "astring"
+]
