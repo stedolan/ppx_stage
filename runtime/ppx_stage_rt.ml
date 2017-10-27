@@ -1,6 +1,7 @@
-type 'a t = 'a * string
+type 'a t = Ppx_staged_internal of (unit -> 'a) * (unit -> string)
 
-let source (a, s) = s
-let value (a, s) = a
+let source (Ppx_staged_internal (a, s)) = s ()
+let run (Ppx_staged_internal (a, s)) = a ()
 
-let make a s = a, s
+let make a s = Ppx_staged_internal (a, s)
+

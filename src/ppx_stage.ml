@@ -1,5 +1,5 @@
 open Migrate_parsetree
-open Ast_404
+open Ast_405
 
 open Asttypes
 open Parsetree
@@ -14,21 +14,21 @@ let expr_extension name pexp =
      | PStr [ {pstr_desc=Pstr_eval (e, _); _} ] ->
         Some (e, loc)
      | _ ->
-        raise (Location.(Error (error ~loc "[%expr] expects an expression")))
+        raise (Location.(Error (error ~loc ("[%" ^ name ^ "] expects an expression"))))
      end
   | _ -> None
 
-let mk_ident name =
+let mk_ident ?(loc=Location.none) name =
   let rec go = function
     | [] -> failwith "error: mk_ident []"
     | [x] -> Longident.Lident x
     | field :: rest -> Longident.Ldot(go rest, field) in
-  { txt = go (List.rev name); loc = Location.none }
+  { txt = go (List.rev name); loc }
 
 
 let unquote mapper pexp =
   match expr_extension "e" pexp with
-  | Some (e, _) -> Exp.(apply (ident (mk_ident ["Ppx_stage_rt"; "value"])) [Nolabel, e])
+  | Some (e, loc) -> Exp.(apply ~loc (ident ~loc (mk_ident ~loc ["Ppx_stage_rt"; "run"])) [Nolabel, e])
   | _ -> default_mapper.expr mapper pexp
 
 let next_id = ref 0
@@ -66,10 +66,13 @@ let splice table s =
     Exp.(apply (ident str_append) [Nolabel, part; Nolabel, e])) 
     parts
     (Exp.constant (Pconst_string ("", None)))
-  
+
+(* thunk E = fun () -> E *)
+let thunk ?loc exp =
+  Exp.fun_ ?loc Nolabel None (Pat.construct ?loc (mk_ident ?loc ["()"])None) exp
 
 let quasiquote mapper pexp =
-  match expr_extension "expr" pexp with
+  match expr_extension "stage" pexp with
   | Some (e, loc) ->
      let unquoter = { default_mapper with expr = unquote } in
      let raw = unquoter.expr unquoter e in
@@ -81,11 +84,12 @@ let quasiquote mapper pexp =
      Pprintast.expression formatter source;
      Format.pp_print_flush formatter ();
      let source = splice table (Buffer.contents buf) in
-     Exp.(apply (ident (mk_ident ["Ppx_stage_rt"; "make"])) [Nolabel, raw; Nolabel, source])
+     Exp.(apply (ident (mk_ident ["Ppx_stage_rt"; "make"]))
+                [Nolabel, thunk ~loc raw; Nolabel, thunk ~loc source])
   | _ -> default_mapper.expr mapper pexp
 
 let mapper _config _cookies =
   { default_mapper with expr = quasiquote }
 
 let () =
-  Driver.register ~name:"ppx_stage" Versions.ocaml_404 mapper
+  Driver.register ~name:"ppx_stage" Versions.ocaml_405 mapper
