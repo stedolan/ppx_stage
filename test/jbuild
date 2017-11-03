@@ -11,6 +11,6 @@
    (preprocess (pps (ppx_stage)))))
 
 (executable
-  ((name strymonas)
-   (modules (strymonas))
+  ((name strymonas_example)
+   (modules (strymonas strymonas_example))
    (preprocess (pps (ppx_stage)))))

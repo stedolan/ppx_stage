@@ -152,10 +152,9 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
              (* already in environment *)
              exp
           | Binder b ->
-             [%expr Ppx_stage_rt.with_renaming
+             [%expr Ppx_stage_rt.Renaming.with_renaming
                  [%e Exp.ident (mk_ident [variable_name site])]
-                 [%e Exp.constant (Pconst_string (IntMap.find b binding_site_names, None))]
-            [%e exp]])
+                 [%e exp]])
         [%expr Ppx_stage_rt.source [%e Exp.ident (mk_ident [contents_name h])]]
         (hole_bindings_list h) in
       Exp.case
@@ -249,12 +248,17 @@ let apply_staging str =
   let mapper = quasiquote_mapper staged_defs IM.empty in
   let mapped_str = mapper.structure mapper str in
   let inserted = initial_defs @ collect_definitions staged_defs in
-  if inserted = [] then
-    mapped_str
-  else
-    [%stri module Staged = struct
-        [%%s initial_defs @ collect_definitions staged_defs]
-    end] :: mapped_str
+  match inserted, mapped_str with
+  | [], mapped_str -> mapped_str
+  | inserted, [{pstr_desc = Pstr_eval (e, ats); pstr_loc}] ->
+     let e' =
+       [%expr let module Staged = struct [%%s inserted] end in
+                  [%e e]] in
+     [{ pstr_desc = Pstr_eval (e', ats); pstr_loc }]
+  | inserted, mapped_str ->
+     [%stri module Staged = struct
+        [%%s inserted]
+      end] :: mapped_str
 
 let () =
   Driver.register ~name:"ppx_stage" Versions.ocaml_405
