@@ -220,12 +220,12 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
 and quasiquote_mapper staged_defs context_vars =
   let expr mapper pexp =
     match pexp.pexp_desc with
-    | Pexp_extension ({ txt = "stage"; loc }, code) ->
+    | Pexp_extension ({ txt = "code"; loc }, code) ->
        begin match code with
        | PStr [ {pstr_desc=Pstr_eval (e, _); _} ] ->
           quasiquote staged_defs context_vars loc e
        | _ ->
-          raise (Location.(Error (error ~loc ("[%stage] expects an expression"))))
+          raise (Location.(Error (error ~loc ("[%code] expects an expression"))))
        end
     | _ -> default_mapper.expr mapper pexp in
   { default_mapper with expr }
@@ -237,12 +237,12 @@ and quasiquote_subexps staged_defs context_vars exp =
 let apply_staging str =
   let initial_defs, str =
     List.partition (fun s -> match s.pstr_desc with
-    | Pstr_extension ((id, payload), _) -> id.txt = "stage"
+    | Pstr_extension ((id, payload), _) -> id.txt = "code"
     | _ -> false) str in
   let initial_defs = initial_defs
     |> List.map (fun s -> match s.pstr_desc with
-      | Pstr_extension (({ txt = "stage"; loc }, PStr s), _) -> s
-      | _ -> raise Location.(Error (error ~loc:s.pstr_loc ("unsupported contents for [%%stage]"))))
+      | Pstr_extension (({ txt = "code"; loc }, PStr s), _) -> s
+      | _ -> raise Location.(Error (error ~loc:s.pstr_loc ("unsupported contents for [%%code]"))))
     |> List.concat in
   let staged_defs = { def_list = []; num_defs = 0 } in
   let mapper = quasiquote_mapper staged_defs IM.empty in

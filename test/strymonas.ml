@@ -9,7 +9,7 @@ accompanying the paper
     Oleg Kiselyov, Aggelos Biboudis, Nick Palladinos, Yannis Smaragdakis
 
 The only modifications are to the syntax of staging (replacing MetaOCaml's
-.<>. and .~() with ppx_stage's [%stage] and [%e]), and the import of the
+.<>. and .~() with ppx_stage's [%code] and [%e]), and the import of the
 code type below, which is not predefined under ppx_stage.
 *)
 
@@ -119,21 +119,21 @@ type ('a,'s) producer_t =
 let for_unfold : 'a producer -> 'a producer =  function
   | Prod ({init},For {upb;index}) ->
     Prod ({init = fun k -> init @@ fun s0 ->
-            [%stage let i = ref 0 in [%e k ([%stage i],s0)]]},
-          Unfold {term = (fun (i,s0) -> [%stage !([%e i]) <= [%e upb s0]]);
+            [%code let i = ref 0 in [%e k ([%code i],s0)]]},
+          Unfold {term = (fun (i,s0) -> [%code !([%e i]) <= [%e upb s0]]);
                   card = Many;
                   step = (fun (i,s0) k ->
-                           index s0 [%stage ! ([%e i])] @@ fun a ->
-                                        [%stage (incr [%e i]; [%e k a])])})
+                           index s0 [%code ! ([%e i])] @@ fun a ->
+                                        [%code (incr [%e i]; [%e k a])])})
   | x -> x
 
 
 let of_arr : 'a array code -> 'a stream = fun arr ->
  let prod =
-   Prod ({init = fun k -> [%stage let arr = [%e arr] in [%e k [%stage arr]]]},
-         For {upb   = (fun arr -> [%stage Array.length [%e arr] - 1]);
+   Prod ({init = fun k -> [%code let arr = [%e arr] in [%e k [%code arr]]]},
+         For {upb   = (fun arr -> [%code Array.length [%e arr] - 1]);
               index = (fun arr i k ->
-                         [%stage let el = ([%e arr]).([%e i]) in [%e k [%stage el]]])})
+                         [%code let el = ([%e arr]).([%e i]) in [%e k [%code el]]])})
  in
  Linear prod
 ;;
@@ -144,13 +144,13 @@ let unfold : ('z code -> ('a * 'z) option code) -> 'z code -> 'a stream
   = fun p z ->
   let prod =
    Prod ({init = fun k ->
-           [%stage let s = ref [%e p z] in [%e k [%stage s]]]},
+           [%code let s = ref [%e p z] in [%e k [%code s]]]},
          Unfold {
-          term = (fun s -> [%stage ! ([%e s]) <> None]);
+          term = (fun s -> [%code ! ([%e s]) <> None]);
           card = Many;
           step = (fun (s) body ->
-	   [%stage match ! ([%e s]) with
-              Some (el,s') -> [%e s] := [%e p [%stage s']]; [%e body [%stage el]]])})
+	   [%code match ! ([%e s]) with
+              Some (el,s') -> [%e s] := [%e p [%code s']]; [%e body [%code el]]])})
  in
  Linear prod
 
@@ -160,15 +160,15 @@ let rec fold_raw : 'a. ('a -> unit code) -> 'a st_stream -> unit code
  = fun consumer -> function
    | Linear (Prod ({init},For {upb;index})) ->
          init @@ fun sp ->
-           [%stage for i = 0 to [%e upb sp] do
-              [%e index sp [%stage i] @@ consumer]
+           [%code for i = 0 to [%e upb sp] do
+              [%e index sp [%code i] @@ consumer]
              done]
    | Linear (Prod ({init},Unfold {term;card=AtMost1;step})) ->
          init @@ fun sp ->
-           [%stage if [%e term sp] then [%e step sp @@ consumer]]
+           [%code if [%e term sp] then [%e step sp @@ consumer]]
    | Linear (Prod ({init},Unfold {term;step;_})) ->
          init @@ fun sp ->
-           [%stage while [%e term sp] do
+           [%code while [%e term sp] do
              [%e step sp @@ consumer]
            done]
    | Nested (prod,nestf) ->             (* polymorphic recursion *)
@@ -176,18 +176,18 @@ let rec fold_raw : 'a. ('a -> unit code) -> 'a st_stream -> unit code
 
 let fold : ('z code -> 'a code -> 'z code) -> 'z code -> 'a stream -> 'z code
  = fun f z str ->
-    [%stage let s = ref [%e z] in
-       ([%e fold_raw (fun a -> [%stage s := [%e f [%stage !s] a]]) str]; !s)]
+    [%code let s = ref [%e z] in
+       ([%e fold_raw (fun a -> [%code s := [%e f [%code !s] a]]) str]; !s)]
 
 let fold_tupled : ('z1 code -> 'a code -> 'z1 code) -> 'z1 code ->
                   ('z2 code -> 'a code -> 'z2 code) -> 'z2 code ->
                   'a stream -> ('z1 * 'z2) code
  = fun f1 z1 f2 z2 str ->
-    [%stage let s1 = ref [%e z1] in
+    [%code let s1 = ref [%e z1] in
       let s2 = ref [%e z2] in
-      ([%e fold_raw (fun a -> [%stage  begin
-         s1 := [%e f1 [%stage !s1] a];
-         s2 := [%e f2 [%stage !s2] a]
+      ([%e fold_raw (fun a -> [%code  begin
+         s1 := [%e f1 [%code !s1] a];
+         s2 := [%e f2 [%code !s2] a]
       end ]) str]; (!s1, !s2))]
 
 (* Transformers *)
@@ -209,7 +209,7 @@ let rec map_raw : 'a 'b. ('a -> ('b -> unit code) -> unit code) ->
 
 let map : ('a code -> 'b code) -> 'a stream -> 'b stream =
    fun f str ->
-   map_raw (fun a k -> [%stage let t = [%e f a] in [%e k [%stage t]]]) str
+   map_raw (fun a k -> [%code let t = [%e f a] in [%e k [%code t]]]) str
 
 let rec flat_map_raw : ('a -> 'b st_stream) -> 'a st_stream -> 'b st_stream =
    fun tr -> function
@@ -238,7 +238,7 @@ let filter : ('a code -> bool code) -> 'a stream -> 'a stream =
 let rec more_termination : bool code -> 'a st_stream -> 'a st_stream =
   let rec add_to_producer new_term = function
     | Prod (init, Unfold {card=Many;term;step}) ->
-        let term s = [%stage [%e new_term] && [%e term s]] in
+        let term s = [%code [%e new_term] && [%e term s]] in
         Prod (init, Unfold {card=Many;term;step})
     | Prod (_, Unfold {card=AtMost1;_}) as p -> p
     | p -> add_to_producer new_term (for_unfold p) in
@@ -257,20 +257,20 @@ let take_raw   : int code -> 'a st_stream -> 'a st_stream =
   let add_nr : 'a. int code -> 'a producer -> (int ref code * 'a) producer =
     fun n -> function Prod ({init},Unfold {term;card;step}) ->
       let init = fun k ->
-        init @@ fun s -> [%stage let nr = ref [%e n] in [%e k ([%stage nr],s)]]
+        init @@ fun s -> [%code let nr = ref [%e n] in [%e k ([%code nr],s)]]
        and prod =
          Unfold {
          card;
          (* For filter, we assume that is a dependent stream... *)
          term = (fun (nr,s) ->
-                 if card = Many then [%stage ! [%e nr] > 0 && [%e term s]] else term s);
+                 if card = Many then [%code ! [%e nr] > 0 && [%e term s]] else term s);
          step = (fun (nr,s) k -> step s (fun el -> k (nr,el)))}
       in Prod ({init},prod)
-  and update_nr = fun (nr,el) k -> [%stage (decr [%e nr]; [%e k el])]
+  and update_nr = fun (nr,el) k -> [%code (decr [%e nr]; [%e k el])]
   in
   fun n -> function
     | Linear (Prod (init, For {upb;index})) ->
-        let upb s = [%stage min ([%e n]-1) [%e upb s]] in
+        let upb s = [%code min ([%e n]-1) [%e upb s]] in
         Linear (Prod (init, For {upb;index}))
     | Linear p ->
        map_raw update_nr @@ Linear (add_nr n p)
@@ -278,7 +278,7 @@ let take_raw   : int code -> 'a st_stream -> 'a st_stream =
         Nested (add_nr n (for_unfold p),
                 fun (nr,a) ->
                   map_raw (fun a -> update_nr (nr,a)) @@
-                  more_termination [%stage ! [%e nr] > 0] (nestf a))
+                  more_termination [%code ! [%e nr] > 0] (nestf a))
 
 let take : int code -> 'a stream -> 'a stream = take_raw
 
@@ -318,7 +318,7 @@ let rec zip_producer: 'a producer -> 'b producer -> ('a * 'b) producer =
    Prod (
    {init = fun k -> i1.init @@ fun s1 -> i2.init @@ fun s2 -> k (s1,s2)},
    For {
-   upb   = (fun (s1,s2)   -> [%stage min [%e f1.upb s1] [%e f2.upb s2]]);
+   upb   = (fun (s1,s2)   -> [%code min [%e f1.upb s1] [%e f2.upb s2]]);
    index = (fun (s1,s2) i k ->
              f1.index s1 i @@ fun e1 -> f2.index s2 i @@ fun e2 ->
                k (e1,e2))})
@@ -329,7 +329,7 @@ let rec zip_producer: 'a producer -> 'b producer -> ('a * 'b) producer =
    {init = fun k -> i1.init @@ fun s1 -> i2.init @@ fun s2 -> k (s1,s2)},
    Unfold {
    card = Many;
-   term = (fun (s1,s2)   -> [%stage [%e f1.term s1] && [%e f2.term s2]]);
+   term = (fun (s1,s2)   -> [%code [%e f1.term s1] && [%e f2.term s2]]);
    step = (fun (s1,s2) k ->
             f1.step s1 @@ fun e1 -> f2.step s2 @@ fun e2 ->
                k (e1,e2))})
@@ -351,17 +351,17 @@ let push_linear : 'a producer -> ('b producer * ('b -> 'c st_stream)) ->
   fun (Prod ({init=init1},Unfold {card=Many;term=term1;step=step1}))
       (Prod ({init=init2},Unfold p2), nestf2) ->
   let init = fun k -> init1 @@ fun s1 -> init2 @@ fun s2 ->
-    [%stage let term1r = ref [%e term1 s1] in [%e k ([%stage term1r],s1,s2)]]
+    [%code let term1r = ref [%e term1 s1] in [%e k ([%code term1r],s1,s2)]]
   and prod = Unfold {
     card = Many;
-    term = (fun (term1r,s1,s2)   -> [%stage ! [%e term1r] && [%e p2.term s2]]);
+    term = (fun (term1r,s1,s2)   -> [%code ! [%e term1r] && [%e p2.term s2]]);
     step = (fun (term1r,s1,s2) k -> p2.step s2 (fun b -> k (term1r,s1,b)))}
   in Nested (Prod ({init},prod),
       fun (term1r,s1,b) ->
       map_raw (fun c k ->
         step1 s1 @@ fun a ->
-          [%stage ([%e term1r] := [%e term1 s1]; [%e k (a,c)])]) @@
-      more_termination [%stage ! [%e term1r]] (nestf2 b))
+          [%code ([%e term1r] := [%e term1 s1]; [%e k (a,c)])]) @@
+      more_termination [%code ! [%e term1r]] (nestf2 b))
 
 
 (* Make a stream linear.
@@ -406,14 +406,14 @@ let rec make_linear : 'a st_stream -> 'a producer = function
          | Linear prod -> begin match for_unfold prod with
              (* Filter *)
            | Prod ({init},Unfold {card=AtMost1; term; step}) ->
-               init @@ fun s -> [%stage if [%e term s] then [%e step s k]]
+               init @@ fun s -> [%code if [%e term s] then [%e step s k]]
              (* Linear nested component *)
              (* XXX We can optimize here for the 1st-level stream:
                 where we know that old_adv in None
              *)
            | Prod ({init},Unfold {term; step; _}) ->
                init @@ fun s ->
-                 [%stage let old_adv = ! [%e nadv] in
+                 [%code let old_adv = ! [%e nadv] in
                    let adv1 () =
                      if [%e term s] then [%e step s k]
                      else [%e nadv] := old_adv
@@ -426,7 +426,7 @@ let rec make_linear : 'a st_stream -> 'a producer = function
       in
       let init k =
         init @@ fun s0 ->
-        [%stage let curr = ref None in      (* Current element, if any *)
+        [%code let curr = ref None in      (* Current element, if any *)
           let nadv = ref None in      (* The step of the innermost stream *)
            (* This is the adv for the outer stream *)
            (* It really tries to obtain the current element
@@ -440,13 +440,13 @@ let rec make_linear : 'a st_stream -> 'a producer = function
                | Some adv -> adv ()
                | None ->
                    [%e step s0 @@ fun e0 ->
-                     make_adv [%stage nadv] (fun e -> [%stage curr := Some [%e e]]) @@
+                     make_adv [%code nadv] (fun e -> [%code curr := Some [%e e]]) @@
                      nestf e0]
              done
-           in adv (); [%e k ([%stage curr],[%stage adv])]]
-        and term (curr,_) = [%stage ! [%e curr] <> None]
+           in adv (); [%e k ([%code curr],[%code adv])]]
+        and term (curr,_) = [%code ! [%e curr] <> None]
         and step (curr,adv) k =
-          [%stage match ! [%e curr] with Some el -> [%e adv] (); [%e k [%stage el]]]
+          [%code match ! [%e curr] with Some el -> [%e adv] (); [%e k [%code el]]]
   in Prod ({init},Unfold{card=Many;term;step})
 
 
