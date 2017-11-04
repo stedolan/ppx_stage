@@ -5,11 +5,11 @@ let hello = [%stage "hello"]
 let asdf = [%stage string_of_int ([%e two] + [%e two]) ^ [%e hello] ]
 
 let print x =
-  Format.printf "[@[%a@]] = [%s]@." Ppx_stage_rt.print x (Ppx_stage_rt.run x)
+  Format.printf "[@[%a@]] = [%s]@." Ppx_stage.print x (Ppx_stage.run x)
 
 let () = print asdf
 
-let fn () = [%stage fun x -> [%e Format.printf "STAGING@."; Ppx_stage_rt.of_variable x]]
+let fn () = [%stage fun x -> [%e Format.printf "STAGING@."; [%stage x]]]
 
 let id2 = [%stage [%e fn ()] [%e hello]]
 
@@ -18,7 +18,7 @@ let () = print id2
 
 let beta code = [%stage [%e code]]
 
-open Ppx_stage_rt
+open Ppx_stage
 let go a b c =
   [%stage let f x = x in f [%e a]]
 
@@ -30,10 +30,10 @@ let c () =
   let f = [%stage fun x -> [%e r := [%stage fun y -> x]; [%stage 0]]] in 
   [%stage fun x -> [%e f] ([%e !r] 1) ]
 
-let foo = Ppx_stage_rt.run (c ()) 42
+let foo = Ppx_stage.run (c ()) 42
 
 let () =
-  Format.printf "[@[%a@]]@." Ppx_stage_rt.print (c ())
+  Format.printf "[@[%a@]]@." Ppx_stage.print (c ())
 
 *)
 
@@ -46,7 +46,7 @@ let bad () =
   [%stage fun y -> fun x -> [%e c1]]
 
 let () =
-  Format.printf "@[%a@]@." Ppx_stage_rt.print (bad ())
+  Format.printf "@[%a@]@." Ppx_stage.print (bad ())
 *)
 
 
@@ -79,11 +79,11 @@ let rec spower n x =
   else [%stage [%e x] * [%e spower (n-1) x]]
 
 
-let spower7 = [%stage fun x -> [%e spower 7 (Ppx_stage_rt.of_variable x)]]
+let spower7 = [%stage fun x -> [%e spower 7 [%stage x]]]
 
 
 let () =
-  Format.printf "[@[%a@]]@." Ppx_stage_rt.print spower7
+  Format.printf "[@[%a@]]@." Ppx_stage.print spower7
 
 (* let stagestage = [%stage [%stage 2]] *)
 
@@ -100,7 +100,7 @@ let three = [%stage [%e nest] 3]
 let mapsuc = map (fun x -> [%stage [%e x] + 1])
 
 let () =
-  Format.printf "[@[%a@]]@." Ppx_stage_rt.print mapsuc
+  Format.printf "[@[%a@]]@." Ppx_stage.print mapsuc
 
 
 let rec repeat x = function
@@ -108,7 +108,7 @@ let rec repeat x = function
   | n -> [%stage [%e x] :: [%e repeat x (n-1)]]
 
 let () =
-  Format.printf "[@[%a@]]@." Ppx_stage_rt.print (repeat [%stage 42] 4)
+  Format.printf "[@[%a@]]@." Ppx_stage.print (repeat [%stage 42] 4)
 
 
 
@@ -135,5 +135,5 @@ let rec spower n = fun%stage x ->
   [%e if n = 0 then [%stage 1] else assert false]
 
 let () =
-  Printf.printf "%s\n" (Ppx_stage_rt.source spower7)
+  Printf.printf "%s\n" (Ppx_stage.source spower7)
 *)

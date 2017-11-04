@@ -1,13 +1,11 @@
 open Migrate_parsetree
 
 open Ast_405
-module Ast_lifter = Ast_lifter_405
 
 open Asttypes
 open Parsetree
 open Ast_mapper
 open Ast_helper
-open Astring
 
 let mk_ident ?(loc=Location.none) name =
   let rec go = function
@@ -16,7 +14,7 @@ let mk_ident ?(loc=Location.none) name =
     | field :: rest -> Longident.Ldot(go rest, field) in
   { txt = go (List.rev name); loc }
 
-module IM = Ppx_stage_rt.IdentMap
+module IM = Ppx_stage.IdentMap
 
 module IntMap = Map.Make (struct type t = int let compare = compare end)
 
@@ -56,23 +54,23 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
       context_var_list in
 
   let exp_with_holes, hole_table =
-    Ppx_stage_rt.analyse_binders context_vars_by_name expr in
+    Binding.analyse_binders context_vars_by_name expr in
   let hole_list = Hashtbl.fold (fun k v ks -> k :: ks) hole_table [] |> List.sort compare in
 
   let binding_site_names =
     Hashtbl.fold (fun _hole (scope, body) acc ->
       IM.fold (fun name site acc ->
         match site with
-        | Ppx_stage_rt.Binder site when IntMap.mem site acc ->
+        | Binding.Binder site when IntMap.mem site acc ->
           (assert (IntMap.find site acc = name); acc)
-        | Ppx_stage_rt.Binder site ->
+        | Binding.Binder site ->
           IntMap.add site name acc
-        | Ppx_stage_rt.Context _ ->
+        | Binding.Context _ ->
            acc
       ) scope acc
     ) hole_table IntMap.empty in
 
-  let variable_name (b : Ppx_stage_rt.binding_site) =
+  let variable_name (b : Binding.binding_site) =
     match b with
     | Binder b ->
        let name = IntMap.find b binding_site_names in
@@ -83,7 +81,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
 
   let allocate_variables body =
     IntMap.fold (fun site name body ->
-      [%expr let [%p Pat.var (Location.mknoloc (variable_name (Binder site)))] = Ppx_stage_rt.fresh_variable [%e Exp.constant (Pconst_string (name, None))] in [%e body]]
+      [%expr let [%p Pat.var (Location.mknoloc (variable_name (Binder site)))] = Ppx_stage.Internal.fresh_variable [%e Exp.constant (Pconst_string (name, None))] in [%e body]]
       ) binding_site_names body in
 
   let hole_bindings_list h =
@@ -98,8 +96,8 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
       let hole_args =
         hole_bindings_list hole
         |> List.map (function
-            | Ppx_stage_rt.Context _ -> []
-            | Ppx_stage_rt.Binder b -> [Nolabel, Exp.ident (mk_ident [variable_name (Binder b)])])
+            | Binding.Context _ -> []
+            | Binding.Binder b -> [Nolabel, Exp.ident (mk_ident [variable_name (Binder b)])])
         |> List.concat in
       let hole_fn = Exp.ident (mk_ident [hole_name hole]) in
       let app = match hole_args with [] -> hole_fn | hole_args -> Exp.apply hole_fn hole_args in
@@ -107,66 +105,69 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
     ) hole_list body in
 
   let exp_compute =
-    Ppx_stage_rt.substitute_holes exp_with_holes (function
+    Ppx_stage.Internal.substitute_holes exp_with_holes (function
     | SubstContext c ->
        (* It is safe to compute context variables in the original
           environment, since by definition they do not depend on
           recent binders *)
-       [%expr Ppx_stage_rt.compute_variable
+       [%expr Ppx_stage.Internal.compute_variable
            [%e Exp.ident (mk_ident [variable_name (Context c)])]
            env'']
     | SubstHole h ->
       let env =
         List.fold_left
-          (fun env (site : Ppx_stage_rt.binding_site) ->
+          (fun env (site : Binding.binding_site) ->
             match site with
             | Context _ ->
              (* already in environment *)
                env
             | Binder b ->
-               [%expr Ppx_stage_rt.Environ.add
+               [%expr Ppx_stage.Internal.Environ.add
                    [%e env]
                    [%e Exp.ident (mk_ident [variable_name site])]
                    [%e Exp.ident (mk_ident [IntMap.find b binding_site_names])]])
           [%expr env'']
           (hole_bindings_list h) in
-      [%expr Ppx_stage_rt.compute [%e Exp.ident (mk_ident [contents_name h])] [%e env]]) in
+      [%expr Ppx_stage.Internal.compute [%e Exp.ident (mk_ident [contents_name h])] [%e env]]) in
 
 
   let exp_source =
-    let marshalled = Exp.constant (Pconst_string (Marshal.to_string exp_with_holes [], None)) in
+    let binary = 
+      Versions.((migrate ocaml_405 ocaml_current).copy_expression exp_with_holes)
+      |> fun x -> Marshal.to_string x [] in
+    let marshalled = Exp.constant (Pconst_string (binary, None)) in
     let pat_int n = Pat.constant (Pconst_integer (string_of_int n, None)) in
     let context_cases = context_var_list |> List.map (fun (c, name) ->
       Exp.case
         (Pat.construct 
-           (Location.mknoloc (Longident.Lident "SubstContext"))
+           (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
            (Some (pat_int c)))
-        [%expr Ppx_stage_rt.source_variable
+        [%expr Ppx_stage.Internal.source_variable
             [%e Exp.ident (mk_ident [variable_name (Context c)])]
             ren'']) in
     let hole_cases = hole_list |> List.map (fun h ->
       let ren = List.fold_left
-        (fun exp (site : Ppx_stage_rt.binding_site) ->
+        (fun exp (site : Binding.binding_site) ->
           match site with
           | Context _ ->
              (* already in environment *)
              exp
           | Binder b ->
-             [%expr Ppx_stage_rt.Renaming.with_renaming
+             [%expr Ppx_stage.Internal.Renaming.with_renaming
                  [%e Exp.ident (mk_ident [variable_name site])]
                  [%e exp]])
-        [%expr Ppx_stage_rt.source [%e Exp.ident (mk_ident [contents_name h])]]
+        [%expr Ppx_stage.Internal.source [%e Exp.ident (mk_ident [contents_name h])]]
         (hole_bindings_list h) in
       Exp.case
         (Pat.construct
-           (Location.mknoloc (Longident.Lident "SubstHole"))
+           (mk_ident ["Ppx_stage"; "Internal"; "SubstHole"])
            (Some (pat_int h)))
         [%expr [%e ren] ren'']) in
     let cases =
       context_cases @ hole_cases
       @  [Exp.case (Pat.any ()) [%expr assert false]] in
     [%expr
-      Ppx_stage_rt.substitute_holes
+      Ppx_stage.Internal.substitute_holes
         (Marshal.from_string [%e marshalled] 0)
         [%e Exp.function_ cases]] in
 
@@ -184,7 +185,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
         hole_list
         (allocate_variables
            (instantiate_holes
-              [%expr Ppx_stage_rt.Ppx_stage_internal 
+              [%expr Ppx_stage.Internal.Ppx_stage_internal 
                   ((fun env'' -> [%e exp_compute]),
                    (fun ren'' -> [%e exp_source]))]))) in
 
@@ -200,10 +201,10 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
       let rec gen_hole_body context_vars bindings body =
         match bindings with
         | [] -> quasiquote_subexps staged_defs context_vars body
-        | Ppx_stage_rt.Context _ :: bindings ->
+        | Binding.Context _ :: bindings ->
            (* context variables are already available *)
            gen_hole_body context_vars bindings body
-        | Ppx_stage_rt.Binder b :: bindings ->
+        | Binding.Binder b :: bindings ->
            let name = IntMap.find b binding_site_names in
            gen_hole_body
              (IM.add name () context_vars)
@@ -234,7 +235,6 @@ and quasiquote_subexps staged_defs context_vars exp =
   mapper.expr mapper exp
 
 let apply_staging str =
-  
   let initial_defs, str =
     List.partition (fun s -> match s.pstr_desc with
     | Pstr_extension ((id, payload), _) -> id.txt = "stage"

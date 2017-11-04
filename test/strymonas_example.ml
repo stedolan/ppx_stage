@@ -25,7 +25,7 @@ let example arr1 =
 let () =
   Format.printf
     "@[%a@]@."
-    Ppx_stage_rt.print [%stage fun arr1 -> [%e example [%stage arr1]]]
+    Ppx_stage.print [%stage fun arr1 -> [%e example [%stage arr1]]]
 
 let cart = fun (arr1, arr2) ->
   of_arr arr1
@@ -37,6 +37,6 @@ let () =
   let c = [%stage fun arr1 arr2 -> [%e cart ([%stage arr1],[%stage arr2 ])]] in
   Format.printf
     "@[%a@]@."
-    Ppx_stage_rt.print c
+    Ppx_stage.print c
 
 end

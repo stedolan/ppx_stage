@@ -11,5 +11,5 @@ available: [ ocaml-version >= "4.04" ]
 depends: [
   "jbuilder" {build}
   "ocaml-migrate-parsetree"
-  "astring"
+  "ppx_tools_versioned"
 ]

@@ -3,14 +3,14 @@
 (executable
   ((name example)
    (modules (example))
-   (preprocess (pps (ppx_stage)))))
+   (preprocess (pps (ppx_stage.ppx)))))
 
 (executable
   ((name streams)
    (modules (streams stream_shape))
-   (preprocess (pps (ppx_stage)))))
+   (preprocess (pps (ppx_stage.ppx)))))
 
 (executable
   ((name strymonas_example)
    (modules (strymonas strymonas_example))
-   (preprocess (pps (ppx_stage)))))
+   (preprocess (pps (ppx_stage.ppx)))))

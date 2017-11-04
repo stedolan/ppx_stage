@@ -13,7 +13,7 @@ The only modifications are to the syntax of staging (replacing MetaOCaml's
 code type below, which is not predefined under ppx_stage.
 *)
 
-type 'a code = 'a Ppx_stage_rt.t
+type 'a code = 'a Ppx_stage.code
 
 (*
 MIT License

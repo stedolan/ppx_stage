@@ -1,8 +1,6 @@
 (jbuild_version 1)
 
 (library
- ((name ppx_stage_rt)
-  (wrapped false)
-  (public_name ppx_stage.runtime)
-  (preprocess (pps (ppx_tools_versioned.metaquot_405)))
-  (libraries (ocaml-migrate-parsetree))))
+ ((name ppx_stage)
+  (public_name ppx_stage.runtime-lib)
+  (libraries (compiler-libs.common))))
