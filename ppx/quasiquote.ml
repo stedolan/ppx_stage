@@ -70,18 +70,17 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
       ) scope acc
     ) hole_table IntMap.empty in
 
-  let variable_name (b : Binding.binding_site) =
-    match b with
-    | Binder b ->
-       let name = IntMap.find b binding_site_names in
-       name ^ "''b" ^ string_of_int b
-    | Context c ->
-       let name = IntMap.find c context_vars_by_id in
-       name ^ "''v" ^ string_of_int c in
+  let binder_variable_name b =
+    let name = IntMap.find b binding_site_names in
+    name ^ "''b" ^ string_of_int b in
+
+  let context_variable_name c =
+    let name = IntMap.find c context_vars_by_id in
+    name ^ "''v" ^ string_of_int c in
 
   let allocate_variables body =
     IntMap.fold (fun site name body ->
-      [%expr let [%p Pat.var (Location.mknoloc (variable_name (Binder site)))] = Ppx_stage.Internal.fresh_variable [%e Exp.constant (Pconst_string (name, None))] in [%e body]]
+      [%expr let [%p Pat.var (Location.mknoloc (binder_variable_name site))] = Ppx_stage.Internal.fresh_variable [%e Exp.constant (Pconst_string (name, None))] in [%e body]]
       ) binding_site_names body in
 
   let hole_bindings_list h =
@@ -97,7 +96,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
         hole_bindings_list hole
         |> List.map (function
             | Binding.Context _ -> []
-            | Binding.Binder b -> [Nolabel, Exp.ident (mk_ident [variable_name (Binder b)])])
+            | Binding.Binder b -> [Nolabel, [%expr Ppx_stage.Internal.of_variable [%e Exp.ident (mk_ident [binder_variable_name b])]]])
         |> List.concat in
       let hole_fn = Exp.ident (mk_ident [hole_name hole]) in
       let app = match hole_args with [] -> hole_fn | hole_args -> Exp.apply hole_fn hole_args in
@@ -110,8 +109,8 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
        (* It is safe to compute context variables in the original
           environment, since by definition they do not depend on
           recent binders *)
-       [%expr Ppx_stage.Internal.compute_variable
-           [%e Exp.ident (mk_ident [variable_name (Context c)])]
+       [%expr Ppx_stage.Internal.compute
+           [%e Exp.ident (mk_ident [context_variable_name c])]
            env'']
     | SubstHole h ->
       let env =
@@ -124,7 +123,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
             | Binder b ->
                [%expr Ppx_stage.Internal.Environ.add
                    [%e env]
-                   [%e Exp.ident (mk_ident [variable_name site])]
+                   [%e Exp.ident (mk_ident [binder_variable_name b])]
                    [%e Exp.ident (mk_ident [IntMap.find b binding_site_names])]])
           [%expr env'']
           (hole_bindings_list h) in
@@ -142,8 +141,8 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
         (Pat.construct 
            (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
            (Some (pat_int c)))
-        [%expr Ppx_stage.Internal.source_variable
-            [%e Exp.ident (mk_ident [variable_name (Context c)])]
+        [%expr Ppx_stage.Internal.source
+            [%e Exp.ident (mk_ident [context_variable_name c])]
             ren'']) in
     let hole_cases = hole_list |> List.map (fun h ->
       let ren = List.fold_left
@@ -154,7 +153,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
              exp
           | Binder b ->
              [%expr Ppx_stage.Internal.Renaming.with_renaming
-                 [%e Exp.ident (mk_ident [variable_name site])]
+                 [%e Exp.ident (mk_ident [binder_variable_name b])]
                  [%e exp]])
         [%expr Ppx_stage.Internal.source [%e Exp.ident (mk_ident [contents_name h])]]
         (hole_bindings_list h) in
@@ -175,7 +174,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
   let staged_code =
     List.fold_right
       (fun (ctx, _) code ->
-        [%expr fun [%p Pat.var (Location.mknoloc (variable_name (Context ctx)))] ->
+        [%expr fun [%p Pat.var (Location.mknoloc (context_variable_name ctx))] ->
           [%e code]])
       context_var_list
       (List.fold_right
@@ -227,6 +226,27 @@ and quasiquote_mapper staged_defs context_vars =
        | _ ->
           raise (Location.(Error (error ~loc ("[%code] expects an expression"))))
        end
+    | Pexp_extension ({ txt = "staged"; loc }, func) ->
+       let rec go context_vars e =
+         match e.pexp_desc with
+         | Pexp_fun (lbl, 
+                     opt,
+                     ({ ppat_desc = Ppat_var v; _ } as pat),
+                     body) ->
+            Exp.fun_ ~loc:e.pexp_loc lbl opt pat
+                     (go (IM.add v.txt () context_vars) body)
+         | Pexp_fun _
+         | Pexp_function _ ->
+            raise (Location.(Error (error ~loc:e.pexp_loc ("only 'fun v ->' is supported in staged functions"))))
+         | _ ->
+            quasiquote staged_defs context_vars loc e in
+       begin match func with
+       | PStr [ {pstr_desc=Pstr_eval (e, _); _} ] ->
+          go context_vars e
+       | _ ->
+          raise (Location.(Error (error ~loc ("fun%staged expects an expression"))))
+       end
+            
     | _ -> default_mapper.expr mapper pexp in
   { default_mapper with expr }
 

@@ -9,8 +9,10 @@ let print x =
 
 let () = print asdf
 
-let fn () = [%code fun x -> [%e Format.printf "STAGING@."; [%code x]]]
+let plus1 = fun%staged x -> x + 1
 
+let fn () = [%code fun x -> [%e Format.printf "STAGING@."; x]]
+module M = Staged
 let id2 = [%code [%e fn ()] [%e hello]]
 
 let () = print id2
