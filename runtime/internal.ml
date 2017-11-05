@@ -118,8 +118,6 @@ module Renaming = struct
     Exp.ident (Location.mknoloc (Longident.Lident bound_name))
 end
 
-type 'a t = Ppx_stage_internal of (Environ.t -> 'a) * (Renaming.t -> expression)
-
 let compute_variable v =
   (fun env ->
       match Environ.lookup env v with
@@ -128,19 +126,6 @@ let compute_variable v =
          failwith ("Variable " ^ variable_name v ^ " used out of scope"))
 
 let source_variable = Renaming.lookup
-
-let of_variable v =
-  Ppx_stage_internal
-    (compute_variable v,
-     source_variable v)
-
-let compute (Ppx_stage_internal (c, s)) = c
-let source (Ppx_stage_internal (c, s)) = s
-
-let run f = compute f Environ.empty
-
-let print ppf f =
-  Pprintast.expression ppf (source f Renaming.empty)
 
 open Ast_mapper
 type substitutable =
@@ -159,3 +144,4 @@ let substitute_holes (e : expression) (f : substitutable -> expression) =
     | _ -> default_mapper.expr mapper pexp in
   let mapper = { default_mapper with expr } in
   mapper.expr mapper e
+

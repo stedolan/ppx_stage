@@ -150,3 +150,23 @@ let analyse_binders (context : int IdentMap.t) (e : expression) :
   let bindings = IdentMap.map (fun c -> Context c) context in
   let e' = analyse_exp { bindings; fresh_binder; fresh_hole; hole_table } e in
   e', hole_table
+
+
+
+open Ast_mapper
+type substitutable =
+| SubstContext of int
+| SubstHole of int
+
+let substitute_holes (e : expression) (f : substitutable -> expression) =
+  let expr mapper pexp =
+    match pexp.pexp_desc with
+    | Pexp_ident { txt = Lident v; loc } ->
+       let id () = int_of_string (String.sub v 1 (String.length v - 1)) in
+       (match v.[0] with
+       | ',' -> f (SubstHole (id ()))
+       | ';' -> f (SubstContext (id ()))
+       | _ -> pexp)
+    | _ -> default_mapper.expr mapper pexp in
+  let mapper = { default_mapper with expr } in
+  mapper.expr mapper e

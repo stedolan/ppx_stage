@@ -19,6 +19,7 @@ module IM = Ppx_stage.IdentMap
 module IntMap = Map.Make (struct type t = int let compare = compare end)
 
 type staged_defs = {
+  modname : string;
   mutable def_list : (string * expression) list;
   mutable num_defs : int
 }
@@ -28,7 +29,7 @@ let add_definition defs exp =
   defs.num_defs <- id + 1;
   let ident = "staged" ^ string_of_int id in
   defs.def_list <- (ident, exp) :: defs.def_list;
-  Exp.ident (mk_ident ["Staged"; ident])
+  Exp.ident (mk_ident [defs.modname; ident])
 
 let collect_definitions defs =
   let vbs =
@@ -96,7 +97,13 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
         hole_bindings_list hole
         |> List.map (function
             | Binding.Context _ -> []
-            | Binding.Binder b -> [Nolabel, [%expr Ppx_stage.Internal.of_variable [%e Exp.ident (mk_ident [binder_variable_name b])]]])
+            | Binding.Binder b -> 
+               let vare = Exp.ident (mk_ident [binder_variable_name b]) in
+               let code = [%expr {
+                 Ppx_stage.compute = (fun env -> Ppx_stage.Internal.compute_variable [%e vare] env);
+                 Ppx_stage.source = (fun ren -> Ppx_stage.Internal.source_variable [%e vare] ren)
+               }] in
+               [Nolabel, code])
         |> List.concat in
       let hole_fn = Exp.ident (mk_ident [hole_name hole]) in
       let app = match hole_args with [] -> hole_fn | hole_args -> Exp.apply hole_fn hole_args in
@@ -104,14 +111,12 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
     ) hole_list body in
 
   let exp_compute =
-    Ppx_stage.Internal.substitute_holes exp_with_holes (function
+    Binding.substitute_holes exp_with_holes (function
     | SubstContext c ->
        (* It is safe to compute context variables in the original
           environment, since by definition they do not depend on
           recent binders *)
-       [%expr Ppx_stage.Internal.compute
-           [%e Exp.ident (mk_ident [context_variable_name c])]
-           env'']
+       [%expr [%e Exp.ident (mk_ident [context_variable_name c])].Ppx_stage.compute env'']
     | SubstHole h ->
       let env =
         List.fold_left
@@ -127,7 +132,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
                    [%e Exp.ident (mk_ident [IntMap.find b binding_site_names])]])
           [%expr env'']
           (hole_bindings_list h) in
-      [%expr Ppx_stage.Internal.compute [%e Exp.ident (mk_ident [contents_name h])] [%e env]]) in
+      [%expr [%e Exp.ident (mk_ident [contents_name h])].Ppx_stage.compute [%e env]]) in
 
 
   let exp_source =
@@ -141,9 +146,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
         (Pat.construct 
            (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
            (Some (pat_int c)))
-        [%expr Ppx_stage.Internal.source
-            [%e Exp.ident (mk_ident [context_variable_name c])]
-            ren'']) in
+        [%expr [%e Exp.ident (mk_ident [context_variable_name c])].Ppx_stage.source ren'']) in
     let hole_cases = hole_list |> List.map (fun h ->
       let ren = List.fold_left
         (fun exp (site : Binding.binding_site) ->
@@ -155,7 +158,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
              [%expr Ppx_stage.Internal.Renaming.with_renaming
                  [%e Exp.ident (mk_ident [binder_variable_name b])]
                  [%e exp]])
-        [%expr Ppx_stage.Internal.source [%e Exp.ident (mk_ident [contents_name h])]]
+        [%expr [%e Exp.ident (mk_ident [contents_name h])].Ppx_stage.source]
         (hole_bindings_list h) in
       Exp.case
         (Pat.construct
@@ -184,9 +187,8 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
         hole_list
         (allocate_variables
            (instantiate_holes
-              [%expr Ppx_stage.Internal.Ppx_stage_internal 
-                  ((fun env'' -> [%e exp_compute]),
-                   (fun ren'' -> [%e exp_source]))]))) in
+              [%expr { Ppx_stage.compute = (fun env'' -> [%e exp_compute]);
+                       Ppx_stage.source = (fun ren'' -> [%e exp_source]) }]))) in
 
   let staged_code = add_definition staged_defs staged_code in
 
@@ -264,21 +266,22 @@ let apply_staging str =
       | Pstr_extension (({ txt = "code"; loc }, PStr s), _) -> s
       | _ -> raise Location.(Error (error ~loc:s.pstr_loc ("unsupported contents for [%%code]"))))
     |> List.concat in
-  let staged_defs = { def_list = []; num_defs = 0 } in
+  (* Slightly revolting, but we need to avoid Staged being shadowed by things imported from other modules *)
+  let modname = "Staged_" ^ string_of_int (Hashtbl.hash str) in
+  let staged_defs = { modname; def_list = []; num_defs = 0 } in
   let mapper = quasiquote_mapper staged_defs IM.empty in
   let mapped_str = mapper.structure mapper str in
   let inserted = initial_defs @ collect_definitions staged_defs in
   match inserted, mapped_str with
   | [], mapped_str -> mapped_str
   | inserted, [{pstr_desc = Pstr_eval (e, ats); pstr_loc}] ->
-     let e' =
-       [%expr let module Staged = struct [%%s inserted] end in
-                  [%e e]] in
+     let e' = Exp.letmodule (Location.mknoloc modname) (Mod.structure inserted) e in
      [{ pstr_desc = Pstr_eval (e', ats); pstr_loc }]
+  | inserted, [{pstr_desc = Pstr_value(Nonrecursive, [ vb ]); pstr_loc}] ->
+     let e' = Exp.letmodule (Location.mknoloc modname) (Mod.structure inserted) vb.pvb_expr in
+     [{ pstr_desc = Pstr_value(Nonrecursive, [ {vb with pvb_expr = e'} ]); pstr_loc}]
   | inserted, mapped_str ->
-     [%stri module Staged = struct
-        [%%s inserted]
-      end] :: mapped_str
+     Str.module_ (Mb.mk (Location.mknoloc modname) (Mod.structure inserted)) :: mapped_str
 
 let () =
   Driver.register ~name:"ppx_stage" Versions.ocaml_405

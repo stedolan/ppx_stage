@@ -1,19 +1,25 @@
-type 'a code = 'a Internal.t
-
 module Internal = Internal
 module IdentMap = IdentMap
 
-let print = Internal.print
-let run = Internal.run
+type 'a code = {
+  compute : Internal.Environ.t -> 'a;
+  source : Internal.Renaming.t -> Parsetree.expression
+}
 
-let source x = Internal.source x Internal.Renaming.empty
+let to_parsetree f = f.source Internal.Renaming.empty
+
+let run f = f.compute Internal.Environ.empty
+
+let print ppf f =
+  Pprintast.expression ppf (to_parsetree f)
+
 
 
 module Lift = struct
   open Parsetree
   open Ast_helper
 
-  let lift c p = Internal.Ppx_stage_internal ((fun env -> c), (fun ren -> p))
+  let lift c p = { compute = (fun env -> c); source = (fun ren -> p) }
 
   let int x : int code =
     lift x (Exp.constant (Pconst_integer (string_of_int x, None)))

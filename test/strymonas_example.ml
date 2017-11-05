@@ -1,9 +1,4 @@
-module M = Staged
 open Strymonas
-
-module K = struct
-module Staged = M
-
 
 let iota n = unfold (fun n -> [%code Some ([%e n],[%e n]+1)]) n
 
@@ -38,5 +33,3 @@ let () =
   Format.printf
     "@[%a@]@."
     Ppx_stage.print c
-
-end
