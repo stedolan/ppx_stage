@@ -1,9 +1,9 @@
 opam-version: "1.2"
 maintainer: "stephen.dolan@cl.cam.ac.uk"
 authors: ["Stephen Dolan"]
-homepage: "https://github.com/stedolan/malfunction"
-bug-reports: "https://github.com/stedolan/malfunction/issues"
-dev-repo: "https://github.com/stedolan/malfunction.git"
+homepage: "https://github.com/stedolan/ppx_stage"
+bug-reports: "https://github.com/stedolan/ppx_stage/issues"
+dev-repo: "https://github.com/stedolan/ppx_stage.git"
 license: "MIT"
 build:
 [[ "jbuilder" "build" "--only-packages" "%{name}%" "--root" "." "-j" jobs "@install" ]]
