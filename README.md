@@ -223,7 +223,7 @@ this works as expected:
 let id x = x  in ((id 1), (id "foo"))
 ```
 
-There is one subtle restriction on polymorphism: variables bound in
+There are two subtle restrictions on polymorphism.  First, variables bound in
 staged programs have monomorphic types in nested `[%code ...]`
 expressions. For instance, this code won't compile:
 
@@ -235,3 +235,12 @@ Error: This expression has type string but an expression was expected of type
 
 The function `id` is polymorphic, but the use of `id` in the nested
 `[%code ...]` block must be monomorphic.
+
+Second, since splices are translated to applications, code generated
+from splices is subject to the (relaxed) value restriction.  For
+example, the following code is given a non-polymorphic type:
+
+```ocaml
+# [%code fun x -> [%e [%code x]]];;
+- : ('_a -> '_a) Ppx_stage.code = fun x  -> x
+```
