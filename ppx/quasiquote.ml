@@ -36,6 +36,14 @@ let add_definition defs exp =
   defs.def_list <- def :: defs.def_list;
   Exp.ident (Location.mknoloc (Longident.Ldot (defs.modname, ident)))
 
+let add_defmodule defs (pmod : module_expr) : Parsetree.module_expr =
+  let id = defs.num_defs in
+  defs.num_defs <- id + 1;
+  let ident = "Staged_" ^ string_of_int id in
+  let def = Str.module_ (Mb.mk (Location.mknoloc ident) pmod) in
+  defs.def_list <- def :: defs.def_list;
+  Mod.ident (Location.mknoloc (Longident.Ldot (defs.modname, ident)))
+
 let collect_definitions defs =
   List.rev defs.def_list
 
@@ -97,7 +105,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
         hole_bindings_list hole
         |> List.map (function
             | Binding.Context _ -> []
-            | Binding.Binder b -> 
+            | Binding.Binder b ->
                let vare = Exp.ident (mk_ident [binder_variable_name b]) in
                let code = [%expr {
                  Ppx_stage.compute = (fun env -> Ppx_stage.Internal.compute_variable [%e vare] env);
@@ -136,14 +144,14 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
 
 
   let exp_source =
-    let binary = 
+    let binary =
       Versions.((migrate ocaml_405 ocaml_current).copy_expression exp_with_holes)
       |> fun x -> Marshal.to_string x [] in
     let marshalled = Exp.constant (Pconst_string (binary, None)) in
     let pat_int n = Pat.constant (Pconst_integer (string_of_int n, None)) in
     let context_cases = context_var_list |> List.map (fun (c, name) ->
       Exp.case
-        (Pat.construct 
+        (Pat.construct
            (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
            (Some (pat_int c)))
         [%expr [%e Exp.ident (mk_ident [context_variable_name c])].Ppx_stage.source ren'']) in
@@ -182,7 +190,7 @@ let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
       context_var_list
       (List.fold_right
         (fun hole code ->
-          [%expr fun [%p Pat.var (Location.mknoloc (hole_name hole))] -> 
+          [%expr fun [%p Pat.var (Location.mknoloc (hole_name hole))] ->
             [%e code]])
         hole_list
         (allocate_variables
@@ -231,7 +239,7 @@ and quasiquote_mapper staged_defs context_vars =
     | Pexp_extension ({ txt = "staged"; loc }, func) ->
        let rec go context_vars e =
          match e.pexp_desc with
-         | Pexp_fun (lbl, 
+         | Pexp_fun (lbl,
                      opt,
                      ({ ppat_desc = Ppat_var v; _ } as pat),
                      body) ->
@@ -248,9 +256,36 @@ and quasiquote_mapper staged_defs context_vars =
        | _ ->
           raise (Location.(Error (error ~loc ("fun%staged expects an expression"))))
        end
-            
+
     | _ -> default_mapper.expr mapper pexp in
-  { default_mapper with expr }
+
+  let module_expr mapper = function
+    (* FIXME: support signatures here *)
+    | {pmod_desc = Pmod_structure str;
+       pmod_attributes = [{txt = "code"; _}, _]} as pmod ->
+       let migrated =
+         Versions.((migrate ocaml_405 ocaml_current).copy_structure str) in
+       let marshalled =
+         Exp.constant (Pconst_string (Marshal.to_string migrated [], None)) in
+       add_defmodule staged_defs {pmod with
+         pmod_attributes = [];
+         pmod_desc = Pmod_structure [%str
+           module Staged_module = struct [%%s str] end
+           let staged_source : Ppx_stage.staged_module =
+             Marshal.from_string [%e marshalled] 0]}
+    | pmod -> default_mapper.module_expr mapper pmod in
+
+  let module_type mapper = function
+    | {pmty_desc;
+       pmty_attributes = [{txt = "code"; _}, _]} as pmty ->
+       {pmty with pmty_attributes = []; pmty_desc = Pmty_signature [
+         Sig.module_ (Md.mk (Location.mknoloc "Staged_module")
+                        (Mty.mk pmty_desc));
+         [%sigi: val staged_source : Ppx_stage.staged_module]
+         ]}
+    | pmty -> default_mapper.module_type mapper pmty in
+
+  { default_mapper with expr; module_expr; module_type }
 
 and quasiquote_subexps staged_defs context_vars exp =
   let mapper = quasiquote_mapper staged_defs context_vars in
@@ -261,16 +296,38 @@ and quasiquote_subexps staged_defs context_vars exp =
 (* module%code, functors, and [%code struct ... end] *)
 let rec quasiquote_structure_item staged_defs mapper stri =
   match stri.pstr_desc with
-  | Pstr_extension (({txt = "code"}, PStr [{pstr_desc = (Pstr_module mb) as modu; _}]), _) ->
-     add_structure_item staged_defs (Str.mk modu);
+  | Pstr_extension (({txt = "code"}, PStr [{pstr_desc = (Pstr_module mb); _}]), _) ->
+     let staged_modname = mb.pmb_name.txt ^ "_StagedCode_" in
+     let loc = mb.pmb_loc in
+     let mexp = mapper.module_expr mapper mb.pmb_expr in
+     let mexp = match mexp.pmod_desc with
+       | Pmod_ident { txt = Ldot (m, f); loc }
+           when m = staged_defs.modname ->
+          { mexp with pmod_desc = Pmod_ident
+              (Location.mkloc (Longident.Lident f) loc) }
+       | _ -> mexp in
+     add_structure_item staged_defs
+       (Str.mk ~loc (Pstr_module
+          { mb with
+            pmb_name = Location.mknoloc staged_modname;
+            pmb_expr = mexp }));
+     add_structure_item staged_defs
+       (Str.mk ~loc (Pstr_module
+         (Mb.mk ~loc (Location.mknoloc mb.pmb_name.txt)
+           (Mod.mk ~loc (Pmod_ident (Location.mkloc
+             (Longident.Ldot (Longident.Lident staged_modname,
+               "Staged_module")) loc))))));
      {stri with pstr_desc = Pstr_module {mb with pmb_expr =
          Mod.mk (Pmod_ident (Location.mknoloc (Longident.Ldot (staged_defs.modname, mb.pmb_name.txt))))}}
   | Pstr_module mb ->
      let rec collect_functors acc modexpr =
        match modexpr.pmod_desc with
        | Pmod_structure s -> acc, Some s
-       | Pmod_functor (ident, signature, body) ->
-          collect_functors ((ident, signature) :: acc) body
+       | Pmod_functor (ident, mty, body) ->
+          let mty = match mty with
+            | None -> None
+            | Some s -> Some (mapper.module_type mapper s) in
+          collect_functors ((ident, mty) :: acc) body
        | _ -> acc, None in
      let (functors, body) = collect_functors [] mb.pmb_expr in
      begin match body with
@@ -305,7 +362,7 @@ let rec quasiquote_structure_item staged_defs mapper stri =
           replace_functors
             (Mod.mk (Pmod_structure (collect_definitions submod))) functors in
         add_structure_item staged_defs (Str.mk (Pstr_module (Mb.mk (Location.mknoloc staged_modname) staged_mod)));
-        {stri with pstr_desc = Pstr_module {mb with pmb_expr = 
+        {stri with pstr_desc = Pstr_module {mb with pmb_expr =
             replace_functors (Mod.mk (Pmod_structure translated)) functors}}
      end
   | _ -> mapper.structure_item mapper stri

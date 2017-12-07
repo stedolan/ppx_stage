@@ -39,3 +39,10 @@ module Lift = struct
   let string x : string code =
     lift x (Exp.constant (Pconst_string (x, None)))
 end
+
+
+type staged_module = Parsetree.structure
+
+
+type mod_identifier = int
+module ModMap = Map.Make (struct type t = mod_identifier let compare = compare end)
