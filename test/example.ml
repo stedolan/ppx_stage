@@ -52,14 +52,14 @@ let () =
 *)
 
 
-[%%code
-let rset r v =
-  let vs' = v :: !r in
-  r := vs';
-  vs'
-]
+module%code RSet = struct
+  let rset r v =
+    let vs' = v :: !r in
+    r := vs';
+    vs'
+end
 
-let foo = [%code rset]
+let foo = [%code RSet.rset]
 
 
 let foo = [%code let x = [] in (2 :: x, "3" :: x)]  
@@ -67,17 +67,17 @@ let foo = [%code let f = fun x -> x in (f 2, f "3")]
 (*let foo = [%code let x = ref [] in (rset x 2, rset x "3")]*)
 
 let foo = [%code let f = fun () -> ref [] in
-                  (rset (f ()) 2, rset (f ()) "3")]
+                  (RSet.rset (f ()) 2, RSet.rset (f ()) "3")]
 
 
 
-[%%code
-let square x = x * x
-]
+module%code Square = struct
+  let square x = x * x
+end
 
 let rec spower n x =
   if n = 0 then [%code 1]
-  else if n mod 2 = 0 then [%code square [%e spower (n/2) x]]
+  else if n mod 2 = 0 then [%code Square.square [%e spower (n/2) x]]
   else [%code [%e x] * [%e spower (n-1) x]]
 
 

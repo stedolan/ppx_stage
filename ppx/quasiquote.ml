@@ -19,25 +19,25 @@ module IM = Ppx_stage.IdentMap
 module IntMap = Map.Make (struct type t = int let compare = compare end)
 
 type staged_defs = {
-  modname : string;
-  mutable def_list : (string * expression) list;
+  modname : Longident.t;
+  mutable def_list : structure_item list;
   mutable num_defs : int
 }
+
+let add_structure_item defs s =
+  defs.num_defs <- defs.num_defs + 1;
+  defs.def_list <- s :: defs.def_list
 
 let add_definition defs exp =
   let id = defs.num_defs in
   defs.num_defs <- id + 1;
   let ident = "staged" ^ string_of_int id in
-  defs.def_list <- (ident, exp) :: defs.def_list;
-  Exp.ident (mk_ident [defs.modname; ident])
+  let def = Str.value Nonrecursive [Vb.mk (Pat.var (Location.mknoloc ident)) exp] in
+  defs.def_list <- def :: defs.def_list;
+  Exp.ident (Location.mknoloc (Longident.Ldot (defs.modname, ident)))
 
 let collect_definitions defs =
-  let vbs =
-    defs.def_list |> List.rev |> List.map (fun (name, body) -> 
-      Vb.mk (Pat.var (Location.mknoloc name)) body) in
-  match vbs with
-  | [] -> []
-  | vbs -> [Str.value Nonrecursive vbs]
+  List.rev defs.def_list
 
 (* FIXME: context_vars assumes same names in staged and top program *)
 let rec quasiquote staged_defs (context_vars : unit IM.t) loc expr =
@@ -256,22 +256,70 @@ and quasiquote_subexps staged_defs context_vars exp =
   let mapper = quasiquote_mapper staged_defs context_vars in
   mapper.expr mapper exp
 
+
+
+(* module%code, functors, and [%code struct ... end] *)
+let rec quasiquote_structure_item staged_defs mapper stri =
+  match stri.pstr_desc with
+  | Pstr_extension (({txt = "code"}, PStr [{pstr_desc = (Pstr_module mb) as modu; _}]), _) ->
+     add_structure_item staged_defs (Str.mk modu);
+     {stri with pstr_desc = Pstr_module {mb with pmb_expr =
+         Mod.mk (Pmod_ident (Location.mknoloc (Longident.Ldot (staged_defs.modname, mb.pmb_name.txt))))}}
+  | Pstr_module mb ->
+     let rec collect_functors acc modexpr =
+       match modexpr.pmod_desc with
+       | Pmod_structure s -> acc, Some s
+       | Pmod_functor (ident, signature, body) ->
+          collect_functors ((ident, signature) :: acc) body
+       | _ -> acc, None in
+     let (functors, body) = collect_functors [] mb.pmb_expr in
+     begin match body with
+     | None -> mapper.structure_item mapper stri
+     | Some body ->
+        let staged_modname = mb.pmb_name.txt ^ "_Staged_" in
+        let staged_mod_path = Longident.Ldot (staged_defs.modname, staged_modname) in
+        let submod = {
+          modname =
+            if functors = [] then
+              staged_mod_path
+            else
+              Lident staged_modname;
+          def_list = []; num_defs = 0
+        } in
+        let translated = quasiquote_structure submod body in
+        let translated =
+          if functors = [] then translated else
+            let rec apply_functor_args = function
+              | [] -> Mod.ident (Location.mknoloc staged_mod_path)
+              | (ident, signature) :: rest ->
+                 Mod.mk (Pmod_apply (apply_functor_args rest,
+                                     Mod.ident (Location.mknoloc (Longident.Lident ident.txt)))) in
+            Str.mk (Pstr_module (Mb.mk (Location.mknoloc staged_modname)
+                                   (apply_functor_args functors))) :: translated in
+        let rec replace_functors body = function
+          | (ident, signature) :: rest ->
+             (* FIXME rename and process signature *)
+             replace_functors (Mod.mk (Pmod_functor (ident, signature, body))) rest
+          | [] -> body in
+        let staged_mod =
+          replace_functors
+            (Mod.mk (Pmod_structure (collect_definitions submod))) functors in
+        add_structure_item staged_defs (Str.mk (Pstr_module (Mb.mk (Location.mknoloc staged_modname) staged_mod)));
+        {stri with pstr_desc = Pstr_module {mb with pmb_expr = 
+            replace_functors (Mod.mk (Pmod_structure translated)) functors}}
+     end
+  | _ -> mapper.structure_item mapper stri
+
+and quasiquote_structure staged_defs str : structure =
+  let mapper = quasiquote_mapper staged_defs IM.empty in
+  List.map (quasiquote_structure_item staged_defs mapper) str
+
 let apply_staging str =
-  let initial_defs, str =
-    List.partition (fun s -> match s.pstr_desc with
-    | Pstr_extension ((id, payload), _) -> id.txt = "code"
-    | _ -> false) str in
-  let initial_defs = initial_defs
-    |> List.map (fun s -> match s.pstr_desc with
-      | Pstr_extension (({ txt = "code"; loc }, PStr s), _) -> s
-      | _ -> raise Location.(Error (error ~loc:s.pstr_loc ("unsupported contents for [%%code]"))))
-    |> List.concat in
   (* Slightly revolting, but we need to avoid Staged being shadowed by things imported from other modules *)
   let modname = "Staged_" ^ string_of_int (Hashtbl.hash str) in
-  let staged_defs = { modname; def_list = []; num_defs = 0 } in
-  let mapper = quasiquote_mapper staged_defs IM.empty in
-  let mapped_str = mapper.structure mapper str in
-  let inserted = initial_defs @ collect_definitions staged_defs in
+  let staged_defs = { modname = Lident modname; def_list = []; num_defs = 0 } in
+  let mapped_str = quasiquote_structure staged_defs str in
+  let inserted = collect_definitions staged_defs in
   match inserted, mapped_str with
   | [], mapped_str -> mapped_str
   | inserted, [{pstr_desc = Pstr_eval (e, ats); pstr_loc}] ->
