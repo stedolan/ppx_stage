@@ -1,4 +1,5 @@
-module Foo (X: Map.OrderedType) (Y : sig val y : int end) = struct
+module Foo (X: Map.OrderedType[@code]) (Y : sig val y : int end) = struct
+  module%code X = X
   module%code M = struct[@code]
     let cmp = X.compare
   end
@@ -32,3 +33,11 @@ module Func (X: Map.OrderedType[@code]) = struct
   module%code X = X
   let foo = [%code X.compare]
 end
+
+(*
+scoping error:
+
+module Bloop (A: Map.OrderedType) = struct
+  let foo = [%code A.compare]
+end
+*)

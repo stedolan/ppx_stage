@@ -145,3 +145,75 @@ let substitute_holes (e : expression) (f : substitutable -> expression) =
   let mapper = { default_mapper with expr } in
   mapper.expr mapper e
 
+
+
+let module_remapper f =
+  let rename (id : Longident.t Location.loc) : Longident.t Location.loc =
+    let rec go : Longident.t -> Longident.t = function
+      | Lident id -> Lident (f id)
+      | Ldot (id, x) -> Ldot (go id, x)
+      | Lapply (idF, idX) -> Lapply (go idF, go idX) in
+    {id with txt = go id.txt} in
+  let open Parsetree in
+  let open Ast_mapper in
+  let rec expr mapper pexp =
+    let pexp_desc = match pexp.pexp_desc with
+      | Pexp_ident id ->
+         Pexp_ident (rename id)
+      | Pexp_construct (id, e) ->
+         Pexp_construct (rename id, expr_opt mapper e)
+      | Pexp_record (fs, e) ->
+         let fs = List.map (fun (id, e) -> (rename id, expr mapper e)) fs in
+         Pexp_record (fs, expr_opt mapper e)
+      | Pexp_field (e, f) ->
+         Pexp_field (expr mapper e, rename f)
+      | Pexp_setfield (e, f, x) ->
+         Pexp_setfield (expr mapper e, rename f, expr mapper x)
+      | Pexp_new id ->
+         Pexp_new (rename id)
+      | Pexp_open (flag, id, e) ->
+         Pexp_open (flag, rename id, expr mapper e)
+      | _ -> (default_mapper.expr mapper pexp).pexp_desc in
+    { pexp with pexp_desc }
+  and expr_opt mapper = function
+    | None -> None
+    | Some e -> Some (expr mapper e)
+  and typ mapper ptyp =
+    let ptyp_desc = match ptyp.ptyp_desc with
+      | Ptyp_constr (id, tys) ->
+         Ptyp_constr (rename id, List.map (typ mapper) tys)
+      | Ptyp_class (id, tys) ->
+         Ptyp_class (rename id, List.map (typ mapper) tys)
+      | _ -> (default_mapper.typ mapper ptyp).ptyp_desc in
+    { ptyp with ptyp_desc }
+  and pat mapper ppat =
+    let ppat_desc = match ppat.ppat_desc with
+      | Ppat_construct (id, pat) ->
+         Ppat_construct (rename id, pat_opt mapper pat)
+      | Ppat_record (fs, flag) ->
+         let fs = List.map (fun (id, p) -> (rename id, pat mapper p)) fs in
+         Ppat_record (fs, flag)
+      | Ppat_type id ->
+         Ppat_type (rename id)
+      | Ppat_open (id, p) ->
+         Ppat_open (rename id, pat mapper p)
+      | _ -> (default_mapper.pat mapper ppat).ppat_desc in
+    { ppat with ppat_desc }
+  and pat_opt mapper = function
+    | None -> None
+    | Some p -> Some (pat mapper p)
+  and module_type mapper pmty =
+    let pmty_desc = match pmty.pmty_desc with
+      | Pmty_ident id -> Pmty_ident (rename id)
+      | Pmty_alias id -> Pmty_alias (rename id)
+      | _ -> (default_mapper.module_type mapper pmty).pmty_desc in
+    { pmty with pmty_desc }
+  and open_description mapper op =
+    { op with popen_lid = rename op.popen_lid }
+  and module_expr mapper pmod =
+    let pmod_desc = match pmod.pmod_desc with
+      | Pmod_ident id -> Pmod_ident (rename id)
+      | _ -> (default_mapper.module_expr mapper pmod).pmod_desc in
+    { pmod with pmod_desc }
+  in
+  { default_mapper with expr; typ; pat; module_type; open_description; module_expr }
