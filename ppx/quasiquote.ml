@@ -121,7 +121,7 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
                let vare = Exp.ident (mk_ident [binder_variable_name b]) in
                let code = [%expr {
                  Ppx_stage.compute = (fun env -> Ppx_stage.Internal.compute_variable [%e vare] env);
-                 Ppx_stage.source = (fun ren -> Ppx_stage.Internal.source_variable [%e vare] ren)
+                 Ppx_stage.source = (fun ren modst -> Ppx_stage.Internal.source_variable [%e vare] ren)
                }] in
                [Nolabel, code])
         |> List.concat in
@@ -166,7 +166,7 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
         (Pat.construct
            (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
            (Some (pat_int c)))
-        [%expr [%e Exp.ident (mk_ident [context_variable_name c])].Ppx_stage.source ren'']) in
+        [%expr [%e Exp.ident (mk_ident [context_variable_name c])].Ppx_stage.source ren'' modst'']) in
     let hole_cases = hole_list |> List.map (fun h ->
       let ren = List.fold_left
         (fun exp (site : Binding.binding_site) ->
@@ -184,13 +184,14 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
         (Pat.construct
            (mk_ident ["Ppx_stage"; "Internal"; "SubstHole"])
            (Some (pat_int h)))
-        [%expr [%e ren] ren'']) in
+        [%expr [%e ren] ren'' modst'']) in
     let cases =
       context_cases @ hole_cases
       @  [Exp.case (Pat.any ()) [%expr assert false]] in
     [%expr
       Ppx_stage.Internal.substitute_holes
-        (Marshal.from_string [%e marshalled] 0)
+        (Ppx_stage.Internal.rename_modules_in_exp modst'' modcontext''_
+           (Marshal.from_string [%e marshalled] 0))
         [%e Exp.function_ cases]] in
 
 
@@ -208,7 +209,7 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
         (allocate_variables
            (instantiate_holes
               [%expr { Ppx_stage.compute = (fun env'' -> [%e exp_compute]);
-                       Ppx_stage.source = (fun ren'' -> [%e exp_source]) }]))) in
+                       Ppx_stage.source = (fun ren'' modst'' -> [%e exp_source]) }]))) in
 
   let staged_code = add_definition staged_defs (modrenamer.expr modrenamer staged_code) in
 
@@ -338,6 +339,11 @@ let rec quasiquote_structure
              (Mod.mk ~loc (Pmod_ident (Location.mkloc
                (Longident.Ldot (Longident.Lident staged_modname,
                  "Staged_module")) loc))))));
+       add_structure_item staged_defs [%stri
+         let modcontext''_ = Ppx_stage.Internal.extend_modcontext
+           modcontext''_
+           [%e Exp.mk (Pexp_constant (Pconst_string (mb.pmb_name.txt, None)))]
+           [%e Exp.mk (Pexp_ident (Location.mknoloc (Longident.(Ldot (Lident staged_modname, "staged_source")))))]];
        let module_code_names = StrMap.add mb.pmb_name.txt staged_contents_modname module_code_names in
        {stri with pstr_desc = Pstr_module {mb with pmb_expr =
            Mod.mk (Pmod_ident (Location.mknoloc (Longident.Ldot (staged_defs.modname, staged_contents_modname))))}}
@@ -410,6 +416,8 @@ let apply_staging str =
   let staged_defs = {
       modname = Lident modname;
       def_list = []; num_defs = 0 } in
+  add_structure_item staged_defs [%stri
+    let modcontext''_ = Ppx_stage.Internal.empty_modcontext];
   let mapped_str = quasiquote_structure staged_defs StrMap.empty StrMap.empty str in
   let inserted = collect_definitions staged_defs in
   match inserted, mapped_str with

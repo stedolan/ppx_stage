@@ -3,6 +3,13 @@ open Parsetree
 open Ast_helper
 
 
+
+type dynamic_modcontext = {
+  used_names : (string, unit) Hashtbl.t;
+  mods : (int, string * Parsetree.structure) Hashtbl.t
+}
+
+
 type _ tag = ..
 module type T = sig 
   type a
@@ -63,12 +70,12 @@ module Renaming = struct
 
   let with_renaming
         (var : 'a variable)
-        (f : t -> expression)
-        (ren : t) : expression =
+        (f : t -> dynamic_modcontext -> expression)
+        (ren : t) (modst : dynamic_modcontext) : expression =
     let entry = Entry { var ; aliases = [] } in
     let vname = variable_name var in
     let shadowed = try IdentMap.find vname ren with Not_found -> [] in
-    let result = f (IdentMap.add vname (entry :: shadowed) ren) in
+    let result = f (IdentMap.add vname (entry :: shadowed) ren) modst in
     match entry with
     | Entry { var; aliases = []} -> result
     | Entry { var; aliases } ->
@@ -145,8 +152,6 @@ let substitute_holes (e : expression) (f : substitutable -> expression) =
   let mapper = { default_mapper with expr } in
   mapper.expr mapper e
 
-
-
 let module_remapper f =
   let rename (id : Longident.t Location.loc) : Longident.t Location.loc =
     let rec go : Longident.t -> Longident.t = function
@@ -217,3 +222,71 @@ let module_remapper f =
     { pmod with pmod_desc }
   in
   { default_mapper with expr; typ; pat; module_type; open_description; module_expr }
+
+
+
+module IntMap = Map.Make(struct type t = int let compare = compare end)
+module StrMap = Map.Make(struct type t = string let compare = compare end)
+
+type module_code = {
+  id : int;
+  orig_name : string;
+  source : Parsetree.structure;
+  modcontext : modcontext
+}
+and modcontext = module_code StrMap.t
+
+let empty_modcontext = StrMap.empty
+let max_mod_id = ref 0
+
+let extend_modcontext ctx name source : modcontext =
+  incr max_mod_id;
+  let md =
+    { id = !max_mod_id;
+      orig_name = name;
+      source;
+      modcontext = ctx } in
+  StrMap.add name md ctx
+
+let rec rename st (mc : modcontext) (s : string) =
+  match StrMap.find s mc with
+  | exception Not_found -> s
+  | md when Hashtbl.mem st.mods md.id ->
+     fst (Hashtbl.find st.mods md.id)
+  | md ->
+     let freshen name =
+       let rec go i =
+         let n = name ^ "'" ^ string_of_int i in
+         if not (Hashtbl.mem st.used_names n) then
+           (Hashtbl.add st.used_names n (); n)
+         else
+           go (i+1) in
+       go 1 in
+     let name = freshen md.orig_name in
+     let mapper = rename_mapper st md.modcontext in
+     let body = mapper.structure mapper md.source in
+     Hashtbl.add st.mods md.id (name, body);
+     name
+and rename_mapper st mc = module_remapper (rename st mc)
+
+let rename_modules_in_exp st mc e =
+  let mapper = rename_mapper st mc in
+  mapper.expr mapper e
+
+let generate_source
+    (f : Renaming.t -> dynamic_modcontext -> Parsetree.expression)
+    : Parsetree.module_binding list * expression =
+  let st = { used_names = Hashtbl.create 20;
+             mods = Hashtbl.create 20 } in
+  let e = f Renaming.empty st in
+  let bindings =
+    Hashtbl.fold (fun k v acc -> (k, v) :: acc) st.mods []
+    |> List.sort (fun (id, _) (id', _) -> compare id id')
+    |> List.map (fun (id, (name, body)) ->
+           Mb.mk (Location.mknoloc name) (Mod.structure body)) in
+  bindings, e
+  
+
+let to_structure (bindings, e) : Parsetree.structure =
+  List.map (fun mb -> Str.mk (Pstr_module mb)) bindings @
+    [Str.mk (Pstr_value (Nonrecursive, [Vb.mk (Pat.any ()) e]))]

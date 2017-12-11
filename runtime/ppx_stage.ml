@@ -3,15 +3,19 @@ module IdentMap = IdentMap
 
 type 'a code = {
   compute : Internal.Environ.t -> 'a;
-  source : Internal.Renaming.t -> Parsetree.expression
+  source : Internal.Renaming.t -> Internal.dynamic_modcontext -> Parsetree.expression;
 }
 
-let to_parsetree f = f.source Internal.Renaming.empty
+let to_parsetree_structure f =
+  Internal.generate_source f.source
+  |> Internal.to_structure
+
+(* let to_parsetree f = f.source Internal.Renaming.empty *)
 
 let run f = f.compute Internal.Environ.empty
 
 let print ppf f =
-  Pprintast.expression ppf (to_parsetree f)
+  Pprintast.structure ppf (to_parsetree_structure f)
 
 
 
@@ -19,7 +23,7 @@ module Lift = struct
   open Parsetree
   open Ast_helper
 
-  let lift c p = { compute = (fun env -> c); source = (fun ren -> p) }
+  let lift c p = { compute = (fun env -> c); source = (fun ren modst -> p) }
 
   let int x : int code =
     lift x (Exp.constant (Pconst_integer (string_of_int x, None)))
@@ -42,9 +46,3 @@ end
 
 
 type staged_module = Parsetree.structure
-
-
-type mod_identifier = int
-module ModMap = Map.Make (struct type t = mod_identifier let compare = compare end)
-
-

@@ -31,8 +31,17 @@ let blah = [%code A.foo]
 
 module Func (X: Map.OrderedType[@code]) = struct
   module%code X = X
-  let foo = [%code X.compare]
+  let foo e = [%code X.compare [%e e] [%e e]]
 end
+
+module App = Func (struct[@code] type t = int let compare = compare end)
+
+module%code X = struct[@code]
+  let bar = 42
+end
+
+let () = Format.printf "%a@." Ppx_stage.print (App.foo [%code X.bar])
+
 
 (*
 scoping error:
