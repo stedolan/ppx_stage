@@ -244,3 +244,127 @@ example, the following code is given a non-polymorphic type:
 # [%code fun x -> [%e [%code x]]];;
 - : ('_a -> '_a) Ppx_stage.code = fun x  -> x
 ```
+
+
+## Modules and functors
+
+*(Support for staged modules and functors is even more experimental
+than the rest of `ppx_stage`. Expect breaking changes.)*
+
+By default, modules definitions are not in scope in `[%code ...]`
+blocks and do not appear in staged programs, so the following gives a
+type error:
+
+``` ocaml
+module M : sig
+  val x : int
+end = struct
+  let x = 42
+end
+let foo y = [%code M.x + [%e y]] (* Error: M.x not in scope *)
+```
+
+To make the definition of `M.x` visible in the staged program, we need
+to annotate the module binding, its signature and its definition:
+
+``` ocaml
+module%code M : sig[@code]
+  val x : int
+end = struct[@code]
+  let x = 42
+end
+let foo y = [%code M.x + [%e y]] (* works *)
+```
+
+When we print e.g. `foo [%code 10]`, the output will include any
+staged module definitions that the result depends on:
+
+``` ocaml
+module M'1 = struct let x = 42  end
+let _ = M'1.x + 10 
+```
+
+Here, the module `M` has been renamed to `M'1`. In this example, the
+renaming is not terribly helpful, but in general the renaming is
+necessary to prevent multiple staged modules with the same name being
+confused.
+
+For programs using modules to group and namespace related definitions,
+staging just means adding `%code` to module bindings and `[@code]` to
+structures (and signatures, if present). To write more advanced staged
+programs (e.g. using functors), you need to understand what the
+separate annotations do.
+
+A *staged module* is a module annotated with `[@code]`, which
+instructs `ppx_stage` to record the source code as well as the
+contents of the module, just like `[%code ...]` does for
+expressions. Staged modules have staged signatures, which are also
+written with [@code], so we can write:
+
+```
+module Staged : sig[@code]
+  val x : int
+end = struct[@code]
+  let x = 42
+end
+```
+
+We get a type error if only one of the `[@code]` annotations is
+present: staged signatures are different from their unstaged
+counterparts.
+
+A staged module is not automatically made available to staged
+expressions using `[%code ...]`. Instead, it must be explicitly
+*exported* using the syntax `module%code`:
+
+``` ocaml
+module%code M = Staged
+```
+
+Separating the construction and export of a staged module like this is
+important for writing code using functors, when a functor might export
+a staged module passed as a parameter. For instance:
+
+``` ocaml
+module F (A : sig[@code] val x : int end) = struct
+  module%code A = A
+  let bigger = [%code A.x + 1]
+end
+module M = F (struct[@code] let x = 42 end)
+```
+
+Note that it is necessary to explicitly export `A` using
+`module%code`: functor arguments are not automatically exported, even
+if they have staged signatures.
+
+Printing `M.bigger` produces the following output:
+
+``` ocaml
+module A'1 = struct let x = 42  end
+let _ = A'1.x + 1
+```
+
+As well as definitions, functor applications can be staged with
+`[@code]`. For instance, this functor accepts a staged module of
+signature `Map.OrderedType` and builds a map with that key type:
+
+``` ocaml
+module MkMap (Key : Map.OrderedType[@code]) = struct
+  module%code Key = Key
+  module%code KMap = Map.Make (Key) [@code]
+  let singleton k v = [%code KMap.singleton [%e k] [%e v]]
+end
+module StringMap =
+  MkMap (struct[@code] type t = string let compare = compare end)
+```
+
+Printing `StringMap.singleton [%code "hello"] [%code 5]` gives:
+
+``` ocaml
+module Key'1 = struct type t = string
+                      let compare = compare  end
+module KMap'1 = (Map.Make)(Key'1)
+let _ = KMap'1.singleton "hello" 5 
+```
+
+

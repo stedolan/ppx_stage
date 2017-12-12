@@ -328,13 +328,16 @@ let rec quasiquote_structure
        let staged_modname = mb.pmb_name.txt ^ "_StagedCode_" in
        let loc = mb.pmb_loc in
        let mexp = mapper.module_expr mapper mb.pmb_expr in
-       let mexp = match mexp.pmod_desc with
+       let rec fixup_mexp mexp =
+         match mexp.pmod_desc with
          | Pmod_ident { txt = Ldot (m, f); loc }
-             when m = staged_defs.modname ->
+              when m = staged_defs.modname ->
             { mexp with pmod_desc = Pmod_ident
                 (Location.mkloc (Longident.Lident f) loc) }
+         | Pmod_constraint (mexp, mty) ->
+            { mexp with pmod_desc = Pmod_constraint (fixup_mexp mexp, mty) }
          | _ -> mexp in
-       let mexp = rename_module functor_arg_names mexp in
+       let mexp = rename_module functor_arg_names (fixup_mexp mexp) in
        add_structure_item staged_defs
          (Str.mk ~loc (Pstr_module
             { mb with
@@ -356,6 +359,9 @@ let rec quasiquote_structure
        {stri with pstr_desc = Pstr_module {mb with pmb_expr =
            Mod.mk (Pmod_ident (Location.mknoloc (Longident.Ldot (staged_defs.modname, staged_contents_modname))))}}
        :: quasiquote_structure staged_defs functor_arg_names module_code_names rest
+    | Pstr_modtype _ ->
+       add_structure_item staged_defs stri;
+       stri :: quasiquote_structure staged_defs functor_arg_names module_code_names rest
     | Pstr_module mb ->
        let rec collect_functors acc modexpr =
          match modexpr.pmod_desc with
