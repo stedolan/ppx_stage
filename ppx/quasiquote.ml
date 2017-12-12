@@ -272,20 +272,28 @@ and quasiquote_mapper staged_defs modrenamer context_vars =
 
     | _ -> default_mapper.expr mapper pexp in
 
+  let migrate_module_expr pmod =
+    (* bit of a hack, o-m-p seems not to provide copy_module_expr *)
+    let mig =
+      Versions.((migrate ocaml_405 ocaml_current).copy_structure [Str.mk (Pstr_include (Incl.mk pmod))]) in
+    match mig with
+    | [{pstr_desc = Pstr_include m}] -> m.pincl_mod
+    | _ -> failwith "modexpr migration failure" in
+
   let module_expr mapper = function
     (* FIXME: support signatures here *)
-    | {pmod_desc = Pmod_structure str;
-       pmod_attributes = [{txt = "code"; _}, _]} as pmod ->
-       let migrated =
-         Versions.((migrate ocaml_405 ocaml_current).copy_structure str) in
+    | {pmod_attributes = [{txt = "code"; _}, _]} as pmod ->
+       let pmod = { pmod with pmod_attributes = [] } in
        let marshalled =
-         Exp.constant (Pconst_string (Marshal.to_string migrated [], None)) in
+         Exp.constant (Pconst_string (Marshal.to_string (migrate_module_expr pmod) [], None)) in
        add_defmodule staged_defs {pmod with
          pmod_attributes = [];
-         pmod_desc = Pmod_structure [%str
-           module Staged_module = struct [%%s modrenamer.structure modrenamer str] end
+         pmod_desc = Pmod_structure (
+           Str.mk (Pstr_module (Mb.mk (Location.mknoloc "Staged_module")
+                                      (modrenamer.module_expr modrenamer pmod)))
+           :: [%str
            let staged_source : Ppx_stage.staged_module =
-             Marshal.from_string [%e marshalled] 0]}
+             Marshal.from_string [%e marshalled] 0])}
     | pmod -> default_mapper.module_expr mapper pmod in
 
   let module_type mapper = function

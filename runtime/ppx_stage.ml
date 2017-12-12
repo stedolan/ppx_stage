@@ -45,4 +45,4 @@ module Lift = struct
 end
 
 
-type staged_module = Parsetree.structure
+type staged_module = Parsetree.module_expr

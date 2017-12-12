@@ -6,7 +6,7 @@ open Ast_helper
 
 type dynamic_modcontext = {
   used_names : (string, unit) Hashtbl.t;
-  mods : (int, string * Parsetree.structure) Hashtbl.t
+  mods : (int, string * Parsetree.module_expr) Hashtbl.t
 }
 
 
@@ -231,7 +231,7 @@ module StrMap = Map.Make(struct type t = string let compare = compare end)
 type module_code = {
   id : int;
   orig_name : string;
-  source : Parsetree.structure;
+  source : Parsetree.module_expr;
   modcontext : modcontext
 }
 and modcontext = module_code StrMap.t
@@ -264,7 +264,7 @@ let rec rename st (mc : modcontext) (s : string) =
        go 1 in
      let name = freshen md.orig_name in
      let mapper = rename_mapper st md.modcontext in
-     let body = mapper.structure mapper md.source in
+     let body = mapper.module_expr mapper md.source in
      Hashtbl.add st.mods md.id (name, body);
      name
 and rename_mapper st mc = module_remapper (rename st mc)
@@ -283,7 +283,7 @@ let generate_source
     Hashtbl.fold (fun k v acc -> (k, v) :: acc) st.mods []
     |> List.sort (fun (id, _) (id', _) -> compare id id')
     |> List.map (fun (id, (name, body)) ->
-           Mb.mk (Location.mknoloc name) (Mod.structure body)) in
+           Mb.mk (Location.mknoloc name) body) in
   bindings, e
   
 

@@ -31,7 +31,8 @@ let blah = [%code A.foo]
 
 module Func (X: Map.OrderedType[@code]) = struct
   module%code X = X
-  let foo e = [%code X.compare [%e e] [%e e]]
+  module%code M = Map.Make(X)[@code]
+  let foo e = [%code M.singleton [%e e] [%e e]]
 end
 
 module App = Func (struct[@code] type t = int let compare = compare end)
