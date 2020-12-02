@@ -283,10 +283,8 @@ let generate_source
   let bindings =
     Hashtbl.fold (fun k v acc -> (k, v) :: acc) st.mods []
     |> List.sort (fun (id, _) (id', _) -> compare id id')
-    |> List.map (fun (_id, (name, body)) ->
-           Mb.mk (Location.mknoloc name) body) in
+    |> List.map (fun (_id, (name, body)) -> Compat.mk_mb name body) in
   bindings, e
-  
 
 let to_structure (bindings, e) : Parsetree.structure =
   List.map (fun mb -> Str.mk (Pstr_module mb)) bindings @

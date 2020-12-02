@@ -41,7 +41,7 @@ module Lift = struct
     else
       lift x (Exp.constant (Pconst_float (Printf.sprintf "%h" x, None)))
   let string x : string code =
-    lift x (Exp.constant (Pconst_string (x, None)))
+    lift x (Exp.constant (Compat.pconst_string x))
 end
 
 

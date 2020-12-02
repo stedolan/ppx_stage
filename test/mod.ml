@@ -1,4 +1,5 @@
-module Foo (X: Map.OrderedType[@code]) (Y : sig val y : int end) = struct
+module type Y = sig val y : int end
+module Foo (X: Map.OrderedType[@code]) (Y : Y) = struct
   module%code X = X
   module%code M = struct[@code]
     let cmp = X.compare
