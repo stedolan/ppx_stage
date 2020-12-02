@@ -1,0 +1,7 @@
+module M'1 = struct let x = 42 end
+let _ = M'1.x + 10
+module X'2 = struct let bar = 42 end
+module X'1 = struct type t = int
+                    let compare = compare end
+module M'1 = (Map.Make)(X'1)
+let _ = M'1.singleton X'2.bar X'2.bar

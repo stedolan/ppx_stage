@@ -1,0 +1,62 @@
+let _ =
+  fun arr1 ->
+    let s = ref [] in
+    (let s''1 = s in
+     let arr = arr1 in
+     let i = ref 0 in
+     let curr = ref None in
+     let nadv = ref None in
+     let adv () =
+       curr := None;
+       while
+         ((!curr) = None) &&
+           (((!nadv) <> None) ||
+              ((!i) <= (min (12 - 1) ((Array.length arr) - 1))))
+         do
+         (match !nadv with
+          | Some adv -> adv ()
+          | None ->
+              let el = arr.(!i) in
+              let t = el * el in
+              (incr i;
+               if (t mod 2) = 0 then (let t = t * t in curr := (Some t))))
+         done in
+     adv ();
+     (let s = ref (Some (1, (1 + 1))) in
+      let term1r = ref ((!curr) <> None) in
+      while (!term1r) && ((!s) <> None) do
+        match !s with
+        | Some (el, s') ->
+            (s := (Some (s', (s' + 1)));
+             (let s = ref (Some ((el + 1), ((el + 1) + 1))) in
+              let nr = ref 3 in
+              while (!term1r) && (((!nr) > 0) && ((!s) <> None)) do
+                match !s with
+                | Some (el, s') ->
+                    (s := (Some (s', (s' + 1)));
+                     (let el''1 = el in
+                      decr nr;
+                      if (el mod 2) = 0
+                      then
+                        (match !curr with
+                         | Some el ->
+                             (adv ();
+                              term1r := ((!curr) <> None);
+                              s''1 := ((el, el''1) :: (!s''1))))))
+                done))
+        done));
+    !s
+let _ =
+  fun arr1 ->
+    fun arr2 ->
+      let s = ref 0 in
+      (let arr = arr1 in
+       for i = 0 to (Array.length arr) - 1 do
+         let el = arr.(i) in
+         let el''1 = el in
+         let arr = arr2 in
+         for i = 0 to (Array.length arr) - 1 do
+           let el = arr.(i) in let t = el''1 * el in s := ((!s) + t)
+         done
+       done);
+      !s

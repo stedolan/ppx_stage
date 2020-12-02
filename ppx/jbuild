@@ -1,9 +1,0 @@
-(jbuild_version 1)
-
-(library
- ((name ppx_stage_expander)
-  (public_name ppx_stage.ppx)
-  (kind ppx_rewriter)
-  (ppx_runtime_libraries (ppx_stage.runtime-lib))
-  (preprocess (pps (ppx_tools_versioned.metaquot_405)))
-  (libraries (ocaml-migrate-parsetree ppx_tools_versioned ppx_stage.runtime-lib))))

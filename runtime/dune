@@ -1,0 +1,4 @@
+(library
+ (name ppx_stage)
+ (public_name ppx_stage.runtime-lib)
+ (libraries compiler-libs.common))

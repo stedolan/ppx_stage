@@ -1,0 +1,27 @@
+(executable
+ (name example)
+ (modules example)
+ (preprocess
+  (pps ppx_stage.ppx)))
+
+(rule (action (with-stdout-to example.out (run ./example.exe))))
+(rule (alias runtest) (action (diff example.expected example.out)))
+
+(executable
+ (name mod)
+ (modules mod)
+ (preprocess
+  (pps ppx_stage.ppx)))
+
+(rule (action (with-stdout-to mod.out (run ./mod.exe))))
+(rule (alias runtest) (action (diff mod.expected mod.out)))
+
+(executable
+ (name strymonas_example)
+ (modules strymonas strymonas_example)
+ (flags (:standard -w -8-27))
+ (preprocess
+  (pps ppx_stage.ppx)))
+
+(rule (action (with-stdout-to strymonas_example.out (run ./strymonas_example.exe))))
+(rule (alias runtest) (action (diff strymonas_example.expected strymonas_example.out)))

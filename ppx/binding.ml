@@ -1,5 +1,5 @@
 open Migrate_parsetree
-open Ast_405
+open Ast_408
 
 open Asttypes
 open Parsetree
@@ -19,11 +19,9 @@ type analysis_env = {
   hole_table : (hole, scope * expression) Hashtbl.t
 }
 
-let rec analyse_exp env { pexp_desc; pexp_loc; pexp_attributes } =
-  analyse_attributes pexp_attributes;
-  { pexp_desc = analyse_exp_desc env pexp_loc pexp_desc;
-    pexp_loc;
-    pexp_attributes }
+let rec analyse_exp env exp =
+  analyse_attributes exp.pexp_attributes;
+  { exp with pexp_desc = analyse_exp_desc env exp.pexp_loc exp.pexp_desc }
 
 and analyse_exp_desc env loc = function
   | Pexp_extension ({txt = "e"; loc}, code) ->
@@ -105,9 +103,9 @@ and analyse_exp_opt env = function
   | None -> None
   | Some e -> Some (analyse_exp env e)
 
-and analyse_pat env { ppat_desc; ppat_loc; ppat_attributes } =
-  analyse_attributes ppat_attributes;
-  analyse_pat_desc env ppat_loc ppat_desc
+and analyse_pat env pat =
+  analyse_attributes pat.ppat_attributes;
+  analyse_pat_desc env pat.ppat_loc pat.ppat_desc
 
 and analyse_pat_desc env loc = function
   | Ppat_any -> env
@@ -118,8 +116,8 @@ and analyse_pat_desc env loc = function
   | Ppat_constant _ -> env
   | Ppat_interval _ -> env
   | Ppat_tuple pats -> List.fold_left analyse_pat env pats
-  | Ppat_construct (loc, None) -> env
-  | Ppat_construct (loc, Some pat) -> analyse_pat env pat
+  | Ppat_construct (_loc, None) -> env
+  | Ppat_construct (_loc, Some pat) -> analyse_pat env pat
   | _ -> raise (Location.(Error (error ~loc ("pattern not supported in staged code"))))
 
 and analyse_case env {pc_lhs; pc_guard; pc_rhs} =
@@ -130,9 +128,9 @@ and analyse_case env {pc_lhs; pc_guard; pc_rhs} =
 
 and analyse_attributes = function
 | [] -> ()
-| ({ loc; txt }, PStr []) :: rest ->
+| {attr_payload=PStr []; _} :: rest ->
    analyse_attributes rest
-| ({ loc; txt }, _) :: _ ->
+| {attr_name={loc;txt}; _} :: _ ->
    raise (Location.(Error (error ~loc ("attribute " ^ txt ^ " not supported in staged code"))))
 
 
@@ -161,7 +159,7 @@ type substitutable =
 let substitute_holes (e : expression) (f : substitutable -> expression) =
   let expr mapper pexp =
     match pexp.pexp_desc with
-    | Pexp_ident { txt = Lident v; loc } ->
+    | Pexp_ident { txt = Lident v; loc = _ } ->
        let id () = int_of_string (String.sub v 1 (String.length v - 1)) in
        (match v.[0] with
        | ',' -> f (SubstHole (id ()))
@@ -196,8 +194,9 @@ let module_remapper f =
          Pexp_setfield (expr mapper e, rename f, expr mapper x)
       | Pexp_new id ->
          Pexp_new (rename id)
-      | Pexp_open (flag, id, e) ->
-         Pexp_open (flag, rename id, expr mapper e)
+      | Pexp_open (md, e) ->
+         Pexp_open ({md with popen_expr = module_expr mapper md.popen_expr },
+                    expr mapper e)
       | _ -> (default_mapper.expr mapper pexp).pexp_desc in
     { pexp with pexp_desc }
   and expr_opt mapper = function
@@ -233,8 +232,8 @@ let module_remapper f =
       | Pmty_alias id -> Pmty_alias (rename id)
       | _ -> (default_mapper.module_type mapper pmty).pmty_desc in
     { pmty with pmty_desc }
-  and open_description mapper op =
-    { op with popen_lid = rename op.popen_lid }
+  and open_description _mapper op =
+    { op with popen_expr = rename op.popen_expr }
   and module_expr mapper pmod =
     let pmod_desc = match pmod.pmod_desc with
       | Pmod_ident id -> Pmod_ident (rename id)

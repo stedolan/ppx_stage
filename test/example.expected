@@ -1,0 +1,19 @@
+STARTUP
+EARLY
+let _ = (string_of_int (((); 2) + ((); 2))) ^ "hello" (* = "4hello"*)
+STAGING
+let _ = (fun x -> x) "hello" (* = "hello"*)
+module RSet'1 =
+  struct let rset r v = let vs' = v :: (!r) in r := vs'; vs' end
+let _ = RSet'1.rset
+let _ = let x = [] in ((2 :: x), ("3" :: x))
+let _ = let f x = x in ((f 2), (f "3"))
+module RSet'1 =
+  struct let rset r v = let vs' = v :: (!r) in r := vs'; vs' end
+let _ =
+  let f () = ref [] in ((RSet'1.rset (f ()) 2), (RSet'1.rset (f ()) "3"))
+module Square'1 = struct let square x = x * x end
+let _ = fun x -> x * (Square'1.square (x * (Square'1.square (x * 1))))
+let _ = (fun x -> x) 3
+let _ = let rec go = function | [] -> [] | x::xs -> (x + 1) :: (go xs) in go
+let _ = [42; 42; 42; 42]

@@ -1,6 +1,6 @@
 open Migrate_parsetree
 
-open Ast_405
+open Ast_408
 
 open Asttypes
 open Parsetree
@@ -60,7 +60,7 @@ let collect_definitions defs =
   List.rev defs.def_list
 
 (* FIXME: context_vars assumes same names in staged and top program *)
-let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
+let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) _loc expr =
   let hole_name h = "hole''_" ^ string_of_int h in
 
   let context_var_list =
@@ -76,10 +76,10 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
 
   let exp_with_holes, hole_table =
     Binding.analyse_binders context_vars_by_name expr in
-  let hole_list = Hashtbl.fold (fun k v ks -> k :: ks) hole_table [] |> List.sort compare in
+  let hole_list = Hashtbl.fold (fun k _v ks -> k :: ks) hole_table [] |> List.sort compare in
 
   let binding_site_names =
-    Hashtbl.fold (fun _hole (scope, body) acc ->
+    Hashtbl.fold (fun _hole (scope, _body) acc ->
       IM.fold (fun name site acc ->
         match site with
         | Binding.Binder site when IntMap.mem site acc ->
@@ -105,8 +105,8 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
       ) binding_site_names body in
 
   let hole_bindings_list h =
-    let scope, body = Hashtbl.find hole_table h in
-    IM.fold (fun name site acc -> site :: acc) scope [] in
+    let scope, _body = Hashtbl.find hole_table h in
+    IM.fold (fun _name site acc -> site :: acc) scope [] in
 
   let contents_name h =
     "contents''_" ^ string_of_int h in
@@ -157,11 +157,11 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
 
   let exp_source =
     let binary =
-      Versions.((migrate ocaml_405 ocaml_current).copy_expression exp_with_holes)
+      Versions.((migrate ocaml_408 ocaml_current).copy_expression exp_with_holes)
       |> fun x -> Marshal.to_string x [] in
     let marshalled = Exp.constant (Pconst_string (binary, None)) in
     let pat_int n = Pat.constant (Pconst_integer (string_of_int n, None)) in
-    let context_cases = context_var_list |> List.map (fun (c, name) ->
+    let context_cases = context_var_list |> List.map (fun (c, _name) ->
       Exp.case
         (Pat.construct
            (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
@@ -214,7 +214,7 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
   let staged_code = add_definition staged_defs (modrenamer.expr modrenamer staged_code) in
 
   let context_contents =
-    context_var_list |> List.map (fun (ctx, name) ->
+    context_var_list |> List.map (fun (_ctx, name) ->
       Nolabel, Exp.ident (mk_ident [name])
     ) in
 
@@ -232,7 +232,7 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) loc expr =
              (IM.add name () context_vars)
              bindings
              [%expr fun [%p Pat.var (Location.mknoloc name)] -> [%e body]] in
-      let (scope, body) = Hashtbl.find hole_table hole in
+      let (_scope, body) = Hashtbl.find hole_table hole in
       Nolabel, gen_hole_body context_vars (List.rev (hole_bindings_list hole)) body) in
 
   (match context_contents @ hole_contents with
@@ -275,14 +275,14 @@ and quasiquote_mapper staged_defs modrenamer context_vars =
   let migrate_module_expr pmod =
     (* bit of a hack, o-m-p seems not to provide copy_module_expr *)
     let mig =
-      Versions.((migrate ocaml_405 ocaml_current).copy_structure [Str.mk (Pstr_include (Incl.mk pmod))]) in
+      Versions.((migrate ocaml_408 ocaml_current).copy_structure [Str.mk (Pstr_include (Incl.mk pmod))]) in
     match mig with
-    | [{pstr_desc = Pstr_include m}] -> m.pincl_mod
+    | [{pstr_desc = Pstr_include m; _}] -> m.pincl_mod
     | _ -> failwith "modexpr migration failure" in
 
   let module_expr mapper = function
     (* FIXME: support signatures here *)
-    | {pmod_attributes = [{txt = "code"; _}, _]} as pmod ->
+    | {pmod_attributes = [{attr_name={txt = "code"; _};_}]; _} as pmod ->
        let pmod = { pmod with pmod_attributes = [] } in
        let marshalled =
          Exp.constant (Pconst_string (Marshal.to_string (migrate_module_expr pmod) [], None)) in
@@ -297,7 +297,7 @@ and quasiquote_mapper staged_defs modrenamer context_vars =
     | pmod -> default_mapper.module_expr mapper pmod in
 
   let module_type mapper = function
-    | {pmty_attributes = [{txt = "code"; _}, _]; _} as pmty ->
+    | {pmty_attributes = [{attr_name={txt = "code"; _}; _}]; _} as pmty ->
        {pmty with pmty_attributes = []; pmty_desc = Pmty_signature [
          Sig.module_ (Md.mk (Location.mknoloc "Staged_module")
                         (Mty.mk (modrenamer.module_type modrenamer pmty).pmty_desc));
@@ -324,7 +324,7 @@ let rec quasiquote_structure
   | [] -> []
   | stri :: rest ->
     match stri.pstr_desc with
-    | Pstr_extension (({txt = "code"}, PStr [{pstr_desc = (Pstr_module mb); _}]), _) ->
+    | Pstr_extension (({txt = "code"; _}, PStr [{pstr_desc = (Pstr_module mb); _}]), _) ->
        let staged_modname = mb.pmb_name.txt ^ "_StagedCode_" in
        let loc = mb.pmb_loc in
        let mexp = mapper.module_expr mapper mb.pmb_expr in
@@ -384,7 +384,7 @@ let rec quasiquote_structure
           let trans_arg ident =
             { ident with txt = ident.txt ^ "_StagedArg_" } in
           let sub_functor_arg_names =
-            List.fold_left (fun names (ident, signature) ->
+            List.fold_left (fun names (ident, _signature) ->
                 StrMap.add ident.txt (trans_arg ident).txt names)
                functor_arg_names
                functors in
@@ -401,7 +401,7 @@ let rec quasiquote_structure
             if functors = [] then translated else
               let rec apply_functor_args = function
                 | [] -> Mod.ident (Location.mknoloc staged_mod_path)
-                | (ident, signature) :: rest ->
+                | (ident, _signature) :: rest ->
                    Mod.mk (Pmod_apply (apply_functor_args rest,
                                        Mod.ident (Location.mknoloc (Longident.Lident ident.txt)))) in
               Str.mk (Pstr_module (Mb.mk (Location.mknoloc staged_modname)
@@ -446,7 +446,7 @@ let apply_staging str =
      Str.module_ (Mb.mk (Location.mknoloc modname) (Mod.structure inserted)) :: mapped_str
 
 let () =
-  Driver.register ~name:"ppx_stage" Versions.ocaml_405
+  Driver.register ~name:"ppx_stage" Versions.ocaml_408
     (fun _config _cookies -> make_top_mapper
       ~signature:(fun s -> s)
       ~structure:apply_staging)

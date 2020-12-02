@@ -23,7 +23,7 @@ module Lift = struct
   open Parsetree
   open Ast_helper
 
-  let lift c p = { compute = (fun env -> c); source = (fun ren modst -> p) }
+  let lift c p = { compute = (fun _env -> c); source = (fun _ren _modst -> p) }
 
   let int x : int code =
     lift x (Exp.constant (Pconst_integer (string_of_int x, None)))

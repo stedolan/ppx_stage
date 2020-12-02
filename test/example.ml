@@ -5,14 +5,18 @@ let hello = [%code "hello"]
 let asdf = [%code string_of_int ([%e two] + [%e two]) ^ [%e hello] ]
 
 let print x =
-  Format.printf "[@[%a@]] = [%s]@." Ppx_stage.print x (Ppx_stage.run x)
+  Format.printf "@[%a@] (* = %S*)@." Ppx_stage.print x (Ppx_stage.run x)
+
+let printc x =
+  Format.printf "@[%a@]@." Ppx_stage.print x
+
 
 let () = print asdf
 
 let plus1 = fun%staged x -> x + 1
 
 let fn () = [%code fun x -> [%e Format.printf "STAGING@."; x]]
-module M = Staged
+
 let id2 = [%code [%e fn ()] [%e hello]]
 
 let () = print id2
@@ -20,16 +24,15 @@ let () = print id2
 
 let beta code = [%code [%e code]]
 
-open Ppx_stage
-let go a b c =
+let go a _b _c =
   [%code let f x = x in f [%e a]]
 
 
 (*
 (* MetaOCaml nasty example *)
 let c () =
-  let r = ref [%code fun z -> z] in 
-  let f = [%code fun x -> [%e r := [%code fun y -> x]; [%code 0]]] in 
+  let r = ref [%code fun z -> z] in
+  let f = [%code fun x -> [%e r := [%code fun y -> x]; [%code 0]]] in
   [%code fun x -> [%e f] ([%e !r] 1) ]
 
 let foo = Ppx_stage.run (c ()) 42
@@ -42,8 +45,8 @@ let () =
 (*
 let bad () =
   let c1 =
-    let r = ref [%code fun z->z] in 
-    let _ = [%code fun x -> [%e r := [%code fun y -> x ]; [%code 0]]] in 
+    let r = ref [%code fun z->z] in
+    let _ = [%code fun x -> [%e r := [%code fun y -> x ]; [%code 0]]] in
     !r in
   [%code fun y -> fun x -> [%e c1]]
 
@@ -52,26 +55,25 @@ let () =
 *)
 
 
-module%code RSet = struct
+module%code RSet = struct[@code]
   let rset r v =
     let vs' = v :: !r in
     r := vs';
     vs'
 end
 
-let foo = [%code RSet.rset]
+let () = printc [%code RSet.rset]
 
 
-let foo = [%code let x = [] in (2 :: x, "3" :: x)]  
-let foo = [%code let f = fun x -> x in (f 2, f "3")]
-(*let foo = [%code let x = ref [] in (rset x 2, rset x "3")]*)
+let () = printc [%code let x = [] in (2 :: x, "3" :: x)]
+let () = printc [%code let f = fun x -> x in (f 2, f "3")]
 
-let foo = [%code let f = fun () -> ref [] in
+let () = printc [%code let f = fun () -> ref [] in
                   (RSet.rset (f ()) 2, RSet.rset (f ()) "3")]
 
 
 
-module%code Square = struct
+module%code Square = struct[@code]
   let square x = x * x
 end
 
@@ -81,13 +83,7 @@ let rec spower n x =
   else [%code [%e x] * [%e spower (n-1) x]]
 
 
-let spower7 = [%code fun x -> [%e spower 7 [%code x]]]
-
-
-let () =
-  Format.printf "[@[%a@]]@." Ppx_stage.print spower7
-
-(* let stagestage = [%code [%code 2]] *)
+let () = printc [%code fun x -> [%e spower 7 [%code x]]]
 
 let map f =
   [%code
@@ -98,21 +94,15 @@ let map f =
 
 let nest = [%code fun x -> [%e [%code [%e [%code x]]]]]
 let three = [%code [%e nest] 3]
+let () = printc three
 
-let mapsuc = map (fun x -> [%code [%e x] + 1])
-
-let () =
-  Format.printf "[@[%a@]]@." Ppx_stage.print mapsuc
-
+let () = printc (map (fun x -> [%code [%e x] + 1]))
 
 let rec repeat x = function
   | 0 -> [%code []]
   | n -> [%code [%e x] :: [%e repeat x (n-1)]]
 
-let () =
-  Format.printf "[@[%a@]]@." Ppx_stage.print (repeat [%code 42] 4)
-
-
+let () = printc (repeat [%code 42] 4)
 
 
 (*
@@ -129,13 +119,4 @@ let map f =
 map : (α code → β code) → (α list → β list) code
 
 
-*)
-
-
-(*
-let rec spower n = fun%code x ->
-  [%e if n = 0 then [%code 1] else assert false]
-
-let () =
-  Printf.printf "%s\n" (Ppx_stage.source spower7)
 *)
