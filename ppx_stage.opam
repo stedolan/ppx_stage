@@ -12,4 +12,5 @@ depends: [
   "dune" {build & >= "2.0"}
   "ocaml-migrate-parsetree"
   "ppx_tools_versioned"
+  "cppo" {build}
 ]
