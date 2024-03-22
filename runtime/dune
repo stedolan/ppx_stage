@@ -1,9 +1,4 @@
 (library
  (name ppx_stage)
  (public_name ppx_stage.runtime-lib)
- (libraries compiler-libs.common))
-
-(rule
- (targets compat.ml)
- (deps compat.cppo.ml)
- (action (run %{bin:cppo} %{deps} -V OCAML:%{ocaml_version} -o %{targets})))
+ (libraries ppxlib ppxlib.ast))

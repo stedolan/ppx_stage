@@ -10,6 +10,7 @@
 (executable
  (name mod)
  (modules mod)
+ (flags (:standard -warn-error -A))
  (preprocess
   (pps ppx_stage.ppx)))
 

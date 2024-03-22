@@ -1,3 +1,5 @@
+[@@@warning "-32"]
+
 let () = Format.printf "STARTUP@."
 let unit = [%code ()]
 let two = [%code [%e Format.printf "EARLY@."; unit]; 2]
