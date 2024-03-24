@@ -1,2 +1,2 @@
-(lang dune 2.0)
+(lang dune 3.1)
 (name ppx_stage)

@@ -3,6 +3,5 @@
  (public_name ppx_stage.ppx)
  (kind ppx_rewriter)
  (ppx_runtime_libraries ppx_stage.runtime-lib)
- (preprocess
-  (pps ppx_tools_versioned.metaquot_408))
- (libraries ocaml-migrate-parsetree ppx_tools_versioned ppx_stage.runtime-lib))
+ (preprocess (pps ppxlib.metaquot))
+ (libraries ppx_stage.runtime-lib ppxlib))

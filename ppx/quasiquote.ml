@@ -1,11 +1,5 @@
-open Migrate_parsetree
-
-open Ast_408
-
-open Asttypes
-open Parsetree
-open Ast_mapper
-open Ast_helper
+open Ppxlib
+open Ppxlib.Ast_builder.Default
 
 let mk_ident ?(loc=Location.none) name =
   let rec go = function
@@ -34,27 +28,30 @@ let make_module_renamer names =
 
 let rename_module names mexp =
   let m = make_module_renamer names in
-  m.module_expr m mexp
+  m#module_expr mexp
 
 let add_structure_item defs s =
   defs.num_defs <- defs.num_defs + 1;
   defs.def_list <- s :: defs.def_list
 
-let add_definition defs exp =
+let add_definition defs expr =
+  let loc = Location.none in
   let id = defs.num_defs in
   defs.num_defs <- id + 1;
   let ident = "staged" ^ string_of_int id in
-  let def = Str.value Nonrecursive [Vb.mk (Pat.var (Location.mknoloc ident)) exp] in
+  let def = pstr_value ~loc Nonrecursive [value_binding ~loc ~pat:(pvar ~loc ident) ~expr] in
   defs.def_list <- def :: defs.def_list;
-  Exp.ident (Location.mknoloc (Longident.Ldot (defs.modname, ident)))
+  pexp_ident ~loc (Located.mk ~loc (Longident.Ldot (defs.modname, ident)))
 
 let add_defmodule defs (pmod : module_expr) : Parsetree.module_expr =
+  let loc = Location.none in
   let id = defs.num_defs in
   defs.num_defs <- id + 1;
   let ident = "Staged_" ^ string_of_int id in
-  let def = Str.module_ (Mb.mk (Location.mknoloc ident) pmod) in
+  let ident' = Located.mk ~loc (Some ident) in
+  let def = pstr_module ~loc (module_binding ~loc ~name:ident' ~expr:pmod) in
   defs.def_list <- def :: defs.def_list;
-  Mod.ident (Location.mknoloc (Longident.Ldot (defs.modname, ident)))
+  pmod_ident ~loc (Located.mk ~loc (Longident.Ldot (defs.modname, ident)))
 
 let collect_definitions defs =
   List.rev defs.def_list
@@ -100,8 +97,12 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) _loc expr =
     name ^ "''v" ^ string_of_int c in
 
   let allocate_variables body =
+    let loc = Location.none in
     IntMap.fold (fun site name body ->
-      [%expr let [%p Pat.var (Location.mknoloc (binder_variable_name site))] = Ppx_stage.Internal.fresh_variable [%e Exp.constant (Pconst_string (name, None))] in [%e body]]
+      [%expr
+        let [%p pvar ~loc (binder_variable_name site)] =
+          Ppx_stage.Internal.fresh_variable [%e estring ~loc name]
+        in [%e body]]
       ) binding_site_names body in
 
   let hole_bindings_list h =
@@ -112,31 +113,33 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) _loc expr =
     "contents''_" ^ string_of_int h in
 
   let instantiate_holes body =
+    let loc = Location.none in
     List.fold_right (fun hole body ->
       let hole_args =
         hole_bindings_list hole
         |> List.map (function
             | Binding.Context _ -> []
             | Binding.Binder b ->
-               let vare = Exp.ident (mk_ident [binder_variable_name b]) in
+               let vare = pexp_ident ~loc (mk_ident [binder_variable_name b]) in
                let code = [%expr {
                  Ppx_stage.compute = (fun env -> Ppx_stage.Internal.compute_variable [%e vare] env);
                  Ppx_stage.source = (fun ren modst -> Ppx_stage.Internal.source_variable [%e vare] ren)
                }] in
-               [Nolabel, code])
+               [code])
         |> List.concat in
-      let hole_fn = Exp.ident (mk_ident [hole_name hole]) in
-      let app = match hole_args with [] -> hole_fn | hole_args -> Exp.apply hole_fn hole_args in
-      [%expr let [%p Pat.var (Location.mknoloc (contents_name hole))] = [%e app] in [%e body]]
+      let hole_fn = pexp_ident ~loc (mk_ident [hole_name hole]) in
+      let app = match hole_args with [] -> hole_fn | hole_args -> eapply ~loc hole_fn hole_args in
+      [%expr let [%p pvar ~loc (contents_name hole)] = [%e app] in [%e body]]
     ) hole_list body in
 
   let exp_compute =
-    Binding.substitute_holes exp_with_holes (function
+    let loc = Location.none in
+    Ppx_stage.Internal.substitute_holes exp_with_holes (function
     | SubstContext c ->
        (* It is safe to compute context variables in the original
           environment, since by definition they do not depend on
           recent binders *)
-       [%expr [%e Exp.ident (mk_ident [context_variable_name c])].Ppx_stage.compute env'']
+       [%expr [%e pexp_ident ~loc (mk_ident [context_variable_name c])].Ppx_stage.compute env'']
     | SubstHole h ->
       let env =
         List.fold_left
@@ -148,25 +151,26 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) _loc expr =
             | Binder b ->
                [%expr Ppx_stage.Internal.Environ.add
                    [%e env]
-                   [%e Exp.ident (mk_ident [binder_variable_name b])]
-                   [%e Exp.ident (mk_ident [IntMap.find b binding_site_names])]])
+                   [%e pexp_ident ~loc (mk_ident [binder_variable_name b])]
+                   [%e pexp_ident ~loc (mk_ident [IntMap.find b binding_site_names])]])
           [%expr env'']
           (hole_bindings_list h) in
-      [%expr [%e Exp.ident (mk_ident [contents_name h])].Ppx_stage.compute [%e env]]) in
+      [%expr [%e pexp_ident ~loc (mk_ident [contents_name h])].Ppx_stage.compute [%e env]]) in
 
 
   let exp_source =
+    let loc = Location.none in
     let binary =
-      Versions.((migrate ocaml_408 ocaml_current).copy_expression exp_with_holes)
-      |> fun x -> Marshal.to_string x [] in
-    let marshalled = Exp.constant (Pconst_string (binary, None)) in
-    let pat_int n = Pat.constant (Pconst_integer (string_of_int n, None)) in
+      (exp_with_holes : Ppxlib.expression) |> fun x -> Marshal.to_string x [] in
+    let marshalled = estring ~loc binary in
     let context_cases = context_var_list |> List.map (fun (c, _name) ->
-      Exp.case
-        (Pat.construct
-           (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
-           (Some (pat_int c)))
-        [%expr [%e Exp.ident (mk_ident [context_variable_name c])].Ppx_stage.source ren'' modst'']) in
+      case
+        ~lhs:(ppat_construct
+          ~loc
+          (mk_ident ["Ppx_stage"; "Internal"; "SubstContext"])
+          (Some (pint ~loc c)))
+        ~guard:None
+        ~rhs:[%expr [%e pexp_ident ~loc (mk_ident [context_variable_name c])].Ppx_stage.source ren'' modst'']) in
     let hole_cases = hole_list |> List.map (fun h ->
       let ren = List.fold_left
         (fun exp (site : Binding.binding_site) ->
@@ -176,34 +180,37 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) _loc expr =
              exp
           | Binder b ->
              [%expr Ppx_stage.Internal.Renaming.with_renaming
-                 [%e Exp.ident (mk_ident [binder_variable_name b])]
+                 [%e pexp_ident ~loc (mk_ident [binder_variable_name b])]
                  [%e exp]])
-        [%expr [%e Exp.ident (mk_ident [contents_name h])].Ppx_stage.source]
+        [%expr [%e pexp_ident ~loc (mk_ident [contents_name h])].Ppx_stage.source]
         (hole_bindings_list h) in
-      Exp.case
-        (Pat.construct
-           (mk_ident ["Ppx_stage"; "Internal"; "SubstHole"])
-           (Some (pat_int h)))
-        [%expr [%e ren] ren'' modst'']) in
+      case
+        ~lhs:(ppat_construct
+          ~loc
+          (mk_ident ["Ppx_stage"; "Internal"; "SubstHole"])
+          (Some (pint ~loc h)))
+        ~guard:None
+        ~rhs:[%expr [%e ren] ren'' modst'']) in
     let cases =
       context_cases @ hole_cases
-      @  [Exp.case (Pat.any ()) [%expr assert false]] in
+      @  [case ~lhs:(ppat_any ~loc) ~guard:None ~rhs:[%expr assert false]] in
     [%expr
       Ppx_stage.Internal.substitute_holes
         (Ppx_stage.Internal.rename_modules_in_exp modst'' modcontext''_
            (Marshal.from_string [%e marshalled] 0))
-        [%e Exp.function_ cases]] in
+        [%e pexp_function ~loc cases]] in
 
 
   let staged_code =
+    let loc = Location.none in
     List.fold_right
       (fun (ctx, _) code ->
-        [%expr fun [%p Pat.var (Location.mknoloc (context_variable_name ctx))] ->
+        [%expr fun [%p pvar ~loc (context_variable_name ctx)] ->
           [%e code]])
       context_var_list
       (List.fold_right
         (fun hole code ->
-          [%expr fun [%p Pat.var (Location.mknoloc (hole_name hole))] ->
+          [%expr fun [%p pvar ~loc (hole_name hole)] ->
             [%e code]])
         hole_list
         (allocate_variables
@@ -211,14 +218,15 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) _loc expr =
               [%expr { Ppx_stage.compute = (fun env'' -> [%e exp_compute]);
                        Ppx_stage.source = (fun ren'' modst'' -> [%e exp_source]) }]))) in
 
-  let staged_code = add_definition staged_defs (modrenamer.expr modrenamer staged_code) in
+  let staged_code = add_definition staged_defs (modrenamer#expression staged_code) in
 
   let context_contents =
     context_var_list |> List.map (fun (_ctx, name) ->
-      Nolabel, Exp.ident (mk_ident [name])
+      Nolabel, evar ~loc:Location.none name
     ) in
 
   let hole_contents =
+    let loc = Location.none in
     hole_list |> List.map (fun hole ->
       let rec gen_hole_body context_vars bindings body =
         match bindings with
@@ -231,85 +239,87 @@ let rec quasiquote staged_defs modrenamer (context_vars : unit IM.t) _loc expr =
            gen_hole_body
              (IM.add name () context_vars)
              bindings
-             [%expr fun [%p Pat.var (Location.mknoloc name)] -> [%e body]] in
+             [%expr fun [%p pvar ~loc name] -> [%e body]] in
       let (_scope, body) = Hashtbl.find hole_table hole in
       Nolabel, gen_hole_body context_vars (List.rev (hole_bindings_list hole)) body) in
 
   (match context_contents @ hole_contents with
   | [] -> staged_code
-  | xs -> Exp.apply staged_code xs)
+  | xs -> pexp_apply ~loc:Location.none staged_code xs)
 
 and quasiquote_mapper staged_defs modrenamer context_vars =
-  let expr mapper pexp =
-    match pexp.pexp_desc with
-    | Pexp_extension ({ txt = "code"; loc }, code) ->
-       begin match code with
-       | PStr [ {pstr_desc=Pstr_eval (e, _); _} ] ->
-          quasiquote staged_defs modrenamer context_vars loc e
-       | _ ->
-          raise (Location.(Error (error ~loc ("[%code] expects an expression"))))
-       end
-    | Pexp_extension ({ txt = "staged"; loc }, func) ->
-       let rec go context_vars e =
-         match e.pexp_desc with
-         | Pexp_fun (lbl,
-                     opt,
-                     ({ ppat_desc = Ppat_var v; _ } as pat),
-                     body) ->
-            Exp.fun_ ~loc:e.pexp_loc lbl opt pat
-                     (go (IM.add v.txt () context_vars) body)
-         | Pexp_fun _
-         | Pexp_function _ ->
-            raise (Location.(Error (error ~loc:e.pexp_loc ("only 'fun v ->' is supported in staged functions"))))
+  object
+    inherit Ppxlib.Ast_traverse.map as super
+
+    method! expression pexp =
+      match pexp.pexp_desc with
+      | Pexp_extension ({ txt = "code"; loc }, code) ->
+         begin match code with
+         | PStr [ {pstr_desc=Pstr_eval (e, _); _} ] ->
+            quasiquote staged_defs modrenamer context_vars loc e
          | _ ->
-            quasiquote staged_defs modrenamer context_vars loc e in
-       begin match func with
-       | PStr [ {pstr_desc=Pstr_eval (e, _); _} ] ->
-          go context_vars e
-       | _ ->
-          raise (Location.(Error (error ~loc ("fun%staged expects an expression"))))
-       end
+           raise (Location.(Error (Error.make ~sub:[] ~loc ("[%code] expects an expression"))))
+         end
+      | Pexp_extension ({ txt = "staged"; loc }, func) ->
+         let rec go context_vars e =
+           match e.pexp_desc with
+           | Pexp_fun (lbl,
+                       opt,
+                       ({ ppat_desc = Ppat_var v; _ } as pat),
+                       body) ->
+              pexp_fun ~loc:e.pexp_loc lbl opt pat
+                       (go (IM.add v.txt () context_vars) body)
+           | Pexp_fun _
+           | Pexp_function _ ->
+             raise (Location.(Error (Error.make ~sub:[] ~loc:e.pexp_loc ("only 'fun v ->' is supported in staged functions"))))
+           | _ ->
+              quasiquote staged_defs modrenamer context_vars loc e in
+         begin match func with
+         | PStr [ {pstr_desc=Pstr_eval (e, _); _} ] ->
+            go context_vars e
+         | _ ->
+           raise (Location.(Error (Error.make ~sub:[] ~loc ("fun%staged expects an expression"))))
+         end
+      | _ -> super#expression pexp
 
-    | _ -> default_mapper.expr mapper pexp in
+    method! module_expr =
+      let loc = Location.none in
+      function
+      (* FIXME: support signatures here *)
+      | {pmod_attributes = [{attr_name={txt = "code"; _};_}]; _} as pmod ->
+         let pmod = { pmod with pmod_attributes = [] } in
+         let marshalled =
+           estring ~loc (Marshal.to_string (pmod : module_expr) []) in
+         add_defmodule staged_defs {pmod with
+           pmod_attributes = [];
+           pmod_desc = Pmod_structure (
+             (pstr_module ~loc
+               (module_binding ~loc ~name:(Located.mk ~loc (Some "Staged_module"))
+                                    ~expr:(modrenamer#module_expr pmod)))
+             :: [%str
+             let staged_source : Ppx_stage.staged_module =
+               Marshal.from_string [%e marshalled] 0])}
+      | pmod -> super#module_expr pmod
 
-  let migrate_module_expr pmod =
-    (* bit of a hack, o-m-p seems not to provide copy_module_expr *)
-    let mig =
-      Versions.((migrate ocaml_408 ocaml_current).copy_structure [Str.mk (Pstr_include (Incl.mk pmod))]) in
-    match mig with
-    | [{pstr_desc = Pstr_include m; _}] -> m.pincl_mod
-    | _ -> failwith "modexpr migration failure" in
-
-  let module_expr mapper = function
-    (* FIXME: support signatures here *)
-    | {pmod_attributes = [{attr_name={txt = "code"; _};_}]; _} as pmod ->
-       let pmod = { pmod with pmod_attributes = [] } in
-       let marshalled =
-         Exp.constant (Pconst_string (Marshal.to_string (migrate_module_expr pmod) [], None)) in
-       add_defmodule staged_defs {pmod with
-         pmod_attributes = [];
-         pmod_desc = Pmod_structure (
-           Str.mk (Pstr_module (Mb.mk (Location.mknoloc "Staged_module")
-                                      (modrenamer.module_expr modrenamer pmod)))
-           :: [%str
-           let staged_source : Ppx_stage.staged_module =
-             Marshal.from_string [%e marshalled] 0])}
-    | pmod -> default_mapper.module_expr mapper pmod in
-
-  let module_type mapper = function
-    | {pmty_attributes = [{attr_name={txt = "code"; _}; _}]; _} as pmty ->
-       {pmty with pmty_attributes = []; pmty_desc = Pmty_signature [
-         Sig.module_ (Md.mk (Location.mknoloc "Staged_module")
-                        (Mty.mk (modrenamer.module_type modrenamer pmty).pmty_desc));
-         [%sigi: val staged_source : Ppx_stage.staged_module]
-         ]}
-    | pmty -> default_mapper.module_type mapper pmty in
-
-  { default_mapper with expr; module_expr; module_type }
+    method! module_type =
+      let loc = Location.none in
+      function
+      | {pmty_attributes = [{attr_name={txt = "code"; _}; _}]; _} as pmty ->
+         {pmty with pmty_attributes = []; pmty_desc = Pmty_signature [
+           psig_module
+             ~loc
+             (module_declaration
+               ~loc
+               ~name:(Located.mk ~loc (Some "Staged_module"))
+               ~type_:(modrenamer#module_type pmty));
+           [%sigi: val staged_source : Ppx_stage.staged_module]
+           ]}
+      | pmty -> super#module_type pmty
+  end
 
 and quasiquote_subexps staged_defs modrenamer context_vars exp =
   let mapper = quasiquote_mapper staged_defs modrenamer context_vars in
-  mapper.expr mapper exp
+  mapper#expression exp
 
 
 
@@ -325,39 +335,40 @@ let rec quasiquote_structure
   | stri :: rest ->
     match stri.pstr_desc with
     | Pstr_extension (({txt = "code"; _}, PStr [{pstr_desc = (Pstr_module mb); _}]), _) ->
-       let staged_modname = mb.pmb_name.txt ^ "_StagedCode_" in
+       let staged_modname = Option.get mb.pmb_name.txt ^ "_StagedCode_" in
        let loc = mb.pmb_loc in
-       let mexp = mapper.module_expr mapper mb.pmb_expr in
+       let mexp = mapper#module_expr mb.pmb_expr in
        let rec fixup_mexp mexp =
          match mexp.pmod_desc with
          | Pmod_ident { txt = Ldot (m, f); loc }
               when m = staged_defs.modname ->
             { mexp with pmod_desc = Pmod_ident
-                (Location.mkloc (Longident.Lident f) loc) }
+                (Located.mk (Longident.Lident f) ~loc) }
          | Pmod_constraint (mexp, mty) ->
             { mexp with pmod_desc = Pmod_constraint (fixup_mexp mexp, mty) }
          | _ -> mexp in
        let mexp = rename_module functor_arg_names (fixup_mexp mexp) in
        add_structure_item staged_defs
-         (Str.mk ~loc (Pstr_module
+         (pstr_module
+            ~loc
             { mb with
-              pmb_name = Location.mknoloc staged_modname;
-              pmb_expr = mexp }));
-       let staged_contents_modname = mb.pmb_name.txt ^ "_StagedCodeContents_" in
+              pmb_name = Located.mk ~loc:Location.none (Some staged_modname);
+              pmb_expr = mexp });
+       let staged_contents_modname = Option.get mb.pmb_name.txt ^ "_StagedCodeContents_" in
        add_structure_item staged_defs
-         (Str.mk ~loc (Pstr_module
-           (Mb.mk ~loc (Location.mknoloc staged_contents_modname)
-             (Mod.mk ~loc (Pmod_ident (Location.mkloc
+         (pstr_module ~loc
+           (module_binding ~loc ~name:(Located.mk ~loc:Location.none (Some staged_contents_modname))
+             ~expr:(pmod_ident ~loc (Located.mk ~loc
                (Longident.Ldot (Longident.Lident staged_modname,
-                 "Staged_module")) loc))))));
+                 "Staged_module"))))));
        add_structure_item staged_defs [%stri
          let modcontext''_ = Ppx_stage.Internal.extend_modcontext
            modcontext''_
-           [%e Exp.mk (Pexp_constant (Pconst_string (mb.pmb_name.txt, None)))]
-           [%e Exp.mk (Pexp_ident (Location.mknoloc (Longident.(Ldot (Lident staged_modname, "staged_source")))))]];
-       let module_code_names = StrMap.add mb.pmb_name.txt staged_contents_modname module_code_names in
+           [%e estring ~loc:Location.none (Option.get mb.pmb_name.txt)]
+           [%e pexp_ident ~loc:Location.none (Located.mk ~loc:Location.none Longident.(Ldot (Lident staged_modname, "staged_source")))]];
+       let module_code_names = StrMap.add (Option.get mb.pmb_name.txt) staged_contents_modname module_code_names in
        {stri with pstr_desc = Pstr_module {mb with pmb_expr =
-           Mod.mk (Pmod_ident (Location.mknoloc (Longident.Ldot (staged_defs.modname, staged_contents_modname))))}}
+           pmod_ident ~loc:Location.none (Located.mk ~loc:Location.none (Longident.Ldot (staged_defs.modname, staged_contents_modname)))}}
        :: quasiquote_structure staged_defs functor_arg_names module_code_names rest
     | Pstr_modtype _ ->
        add_structure_item staged_defs stri;
@@ -366,26 +377,24 @@ let rec quasiquote_structure
        let rec collect_functors acc modexpr =
          match modexpr.pmod_desc with
          | Pmod_structure s -> acc, Some s
-         | Pmod_functor (ident, mty, body) ->
-            let mty = match mty with
-              | None -> None
-              | Some s -> Some (mapper.module_type mapper s) in
+         | Pmod_functor (Named (ident, mty), body) ->
+            let mty = mapper#module_type mty in
             collect_functors ((ident, mty) :: acc) body
          | _ -> acc, None in
        let (functors, body) = collect_functors [] mb.pmb_expr in
        begin match body with
        | None ->
           (* FIXME: does mod renaming happen correctly here? *)
-          mapper.structure_item mapper stri
+          mapper#structure_item stri
           :: quasiquote_structure staged_defs functor_arg_names module_code_names rest
        | Some body ->
-          let staged_modname = mb.pmb_name.txt ^ "_Staged_" in
+          let staged_modname = Option.get mb.pmb_name.txt ^ "_Staged_" in
           let staged_mod_path = Longident.Ldot (staged_defs.modname, staged_modname) in
           let trans_arg ident =
-            { ident with txt = ident.txt ^ "_StagedArg_" } in
+            { ident with txt = Option.get ident.txt ^ "_StagedArg_" } in
           let sub_functor_arg_names =
             List.fold_left (fun names (ident, _signature) ->
-                StrMap.add ident.txt (trans_arg ident).txt names)
+                StrMap.add (Option.get ident.txt) (trans_arg ident).txt names)
                functor_arg_names
                functors in
           let submod = {
@@ -400,28 +409,38 @@ let rec quasiquote_structure
           let translated =
             if functors = [] then translated else
               let rec apply_functor_args = function
-                | [] -> Mod.ident (Location.mknoloc staged_mod_path)
+                | [] -> pmod_ident ~loc:Location.none (Located.mk ~loc:Location.none staged_mod_path)
                 | (ident, _signature) :: rest ->
-                   Mod.mk (Pmod_apply (apply_functor_args rest,
-                                       Mod.ident (Location.mknoloc (Longident.Lident ident.txt)))) in
-              Str.mk (Pstr_module (Mb.mk (Location.mknoloc staged_modname)
-                                     (apply_functor_args functors))) :: translated in
+                   pmod_apply
+                     ~loc:Location.none
+                     (apply_functor_args rest)
+                     (pmod_ident ~loc:Location.none (Located.mk ~loc:Location.none (Longident.Lident (Option.get ident.txt)))) in
+              pstr_module
+                ~loc:Location.none
+                (module_binding
+                  ~loc:Location.none
+                  ~name:(Located.mk ~loc:Location.none (Some staged_modname))
+                  ~expr:(apply_functor_args functors)) :: translated in
           let rec replace_functors body = function
-            | (ident, signature) :: rest ->
+            | ((ident : string option loc), signature) :: rest ->
                (* FIXME rename and process signature *)
-               replace_functors (Mod.mk (Pmod_functor (ident, signature, body))) rest
+              replace_functors (pmod_functor ~loc:Location.none (Named (ident, signature)) body) rest
             | [] -> body in
           let staged_mod =
             replace_functors
-              (Mod.mk (Pmod_structure (collect_definitions submod)))
-              (List.map (fun (ident, signature) -> (trans_arg ident, signature)) functors) in
-          add_structure_item staged_defs (Str.mk (Pstr_module (Mb.mk (Location.mknoloc staged_modname) staged_mod)));
+              (pmod_structure ~loc:Location.none (collect_definitions submod))
+              (List.map (fun (ident, signature) ->
+                  let ident = trans_arg ident in
+                  ({ ident with txt = Some ident.txt }, signature))
+                functors) in
+          let staged_modname = Located.mk ~loc:Location.none (Some staged_modname) in
+          add_structure_item staged_defs (pstr_module ~loc:Location.none (module_binding ~loc:Location.none ~name:staged_modname ~expr:staged_mod));
           {stri with pstr_desc = Pstr_module {mb with pmb_expr =
-              replace_functors (Mod.mk (Pmod_structure translated)) functors}}
+              replace_functors (pmod_structure ~loc:Location.none translated) functors}}
           :: quasiquote_structure staged_defs functor_arg_names module_code_names rest
        end
     | _ ->
-       mapper.structure_item mapper stri
+       mapper#structure_item stri
        :: quasiquote_structure staged_defs functor_arg_names module_code_names rest
 
 let apply_staging str =
@@ -430,23 +449,23 @@ let apply_staging str =
   let staged_defs = {
       modname = Lident modname;
       def_list = []; num_defs = 0 } in
-  add_structure_item staged_defs [%stri
-    let modcontext''_ = Ppx_stage.Internal.empty_modcontext];
+  add_structure_item
+    staged_defs
+    (let loc = Location.none in
+     [%stri let modcontext''_ = Ppx_stage.Internal.empty_modcontext]);
   let mapped_str = quasiquote_structure staged_defs StrMap.empty StrMap.empty str in
   let inserted = collect_definitions staged_defs in
+  let loc = Location.none in
+  let modname = Located.mk ~loc (Some modname) in
   match inserted, mapped_str with
   | [], mapped_str -> mapped_str
   | inserted, [{pstr_desc = Pstr_eval (e, ats); pstr_loc}] ->
-     let e' = Exp.letmodule (Location.mknoloc modname) (Mod.structure inserted) e in
+     let e' = pexp_letmodule ~loc modname (pmod_structure ~loc inserted) e in
      [{ pstr_desc = Pstr_eval (e', ats); pstr_loc }]
   | inserted, [{pstr_desc = Pstr_value(Nonrecursive, [ vb ]); pstr_loc}] ->
-     let e' = Exp.letmodule (Location.mknoloc modname) (Mod.structure inserted) vb.pvb_expr in
+     let e' = pexp_letmodule ~loc modname (pmod_structure ~loc inserted) vb.pvb_expr in
      [{ pstr_desc = Pstr_value(Nonrecursive, [ {vb with pvb_expr = e'} ]); pstr_loc}]
   | inserted, mapped_str ->
-     Str.module_ (Mb.mk (Location.mknoloc modname) (Mod.structure inserted)) :: mapped_str
+     pstr_module ~loc (module_binding ~loc ~name:modname ~expr:(pmod_structure ~loc inserted)) :: mapped_str
 
-let () =
-  Driver.register ~name:"ppx_stage" Versions.ocaml_408
-    (fun _config _cookies -> make_top_mapper
-      ~signature:(fun s -> s)
-      ~structure:apply_staging)
+let () = Ppxlib.Driver.register_transformation "ppx_stage" ~impl:apply_staging
